@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+/* Ink and Parchment - Warm charcoal dark theme
+ * Warm neutrals with terracotta primary accent
+ * Semantic badge clustering by event type family */
+:root {
+  /* Surface scale - Warm charcoal with sepia undertones */
+  --rc-surface-deepest: #0f0e0d;
+  --rc-surface-deep: #161514;
+  --rc-surface-base: #1c1a18;
+  --rc-surface-raised: #252220;
+  --rc-surface-elevated: #302c29;
+  --rc-surface-overlay: #3a3532;
+
+  /* Text scale - Cream tints for eye comfort */
+  --rc-text-primary: #e8e4df;
+  --rc-text-secondary: #c4beb6;
+  --rc-text-muted: #8f8780;
+  --rc-text-faint: #5f584f;
+  --rc-text-inverse: #0f0e0d;
+
+  /* Borders */
+  --rc-border-subtle: #252220;
+  --rc-border-default: #302c29;
+  --rc-border-strong: #3a3532;
+  --rc-border-focus: #b87a4d;
+
+  /* Primary accent - Terracotta */
+  --rc-accent-primary: #c4875c;
+  --rc-accent-primary-hover: #d4976c;
+  --rc-accent-primary-muted: #8a5d3d;
+  --rc-accent-primary-faint: #3d2a1f;
+
+  /* Secondary accent - Slate blue */
+  --rc-accent-secondary: #7a9bb5;
+  --rc-accent-secondary-hover: #8aabcd;
+  --rc-accent-secondary-muted: #4a6070;
+  --rc-accent-secondary-faint: #1f2830;
+
+  /* Semantic colors */
+  --rc-success: #7a9c7a;
+  --rc-success-muted: #3d4f3d;
+  --rc-warning: #c9a857;
+  --rc-warning-muted: #6b5a2e;
+  --rc-error: #c27070;
+  --rc-error-muted: #5c3535;
+  --rc-info: #7a9bb5;
+  --rc-info-muted: #3d4f5c;
+
+  /* Event badge colors - Semantic clustering */
+  /* Human input - warm */
+  --rc-badge-user-prompt-bg: #8a5d3d;
+  --rc-badge-user-prompt-text: #f5ece4;
+  /* AI response - cool */
+  --rc-badge-assistant-bg: #4a6070;
+  --rc-badge-assistant-text: #e0e8ef;
+  --rc-badge-thinking-bg: #5a687a;
+  --rc-badge-thinking-text: #e0e8ef;
+  --rc-badge-plan-bg: #6a7080;
+  --rc-badge-plan-text: #e8e8ef;
+  /* Tool/Action - earthy */
+  --rc-badge-tool-bg: #4a5c4a;
+  --rc-badge-tool-text: #d8e4d8;
+  --rc-badge-file-diff-bg: #5c6a4a;
+  --rc-badge-file-diff-text: #e4ecd8;
+  /* System/Meta - neutral */
+  --rc-badge-session-bg: #4a4a4a;
+  --rc-badge-session-text: #d8d8d8;
+  --rc-badge-notification-bg: #5a5a5a;
+  --rc-badge-notification-text: #e4e4e4;
+  --rc-badge-compaction-bg: #6a5a4a;
+  --rc-badge-compaction-text: #f0e8dc;
+  /* Special */
+  --rc-badge-error-bg: #6b4040;
+  --rc-badge-error-text: #f0d8d8;
+  --rc-badge-learning-bg: #5c4a6a;
+  --rc-badge-learning-text: #e8dced;
+  --rc-badge-permission-bg: #6b5a2e;
+  --rc-badge-permission-text: #f0e8dc;
+
+  /* Legacy aliases for compatibility */
+  --ctp-crust: var(--rc-surface-deepest);
+  --ctp-mantle: var(--rc-surface-deep);
+  --ctp-base: var(--rc-surface-base);
+  --ctp-surface0: var(--rc-surface-raised);
+  --ctp-surface1: var(--rc-surface-elevated);
+  --ctp-surface2: var(--rc-surface-overlay);
+  --ctp-text: var(--rc-text-primary);
+  --ctp-subtext1: var(--rc-text-secondary);
+  --ctp-subtext0: var(--rc-text-muted);
+  --ctp-overlay1: var(--rc-text-muted);
+  --ctp-overlay0: var(--rc-text-faint);
+  --ctp-peach: var(--rc-accent-primary);
+  --ctp-blue: var(--rc-accent-secondary);
+  --ctp-teal: var(--rc-success);
+  --ctp-green: var(--rc-success);
+  --ctp-red: var(--rc-error);
+  --ctp-yellow: var(--rc-warning);
+}
+
+html {
+  font-size: 125%; /* Scale UI to 125% natively */
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--ctp-base);
+  color: var(--ctp-text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ctp-mantle);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ctp-surface2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ctp-overlay0);
+}
+
+/* Selection styling */
+::selection {
+  background: var(--rc-accent-primary-muted);
+  color: var(--rc-text-primary);
+}
+
+/* Prose styles for markdown content */
+.prose {
+  line-height: 1.6;
+}
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  color: var(--ctp-text);
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.prose h1 { font-size: 1.5em; }
+.prose h2 { font-size: 1.25em; }
+.prose h3 { font-size: 1.1em; }
+.prose h4 { font-size: 1em; }
+
+.prose p {
+  margin-bottom: 0.75em;
+}
+
+.prose ul, .prose ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+
+.prose li {
+  margin-bottom: 0.25em;
+}
+
+.prose strong {
+  color: var(--ctp-peach);
+  font-weight: 600;
+}
+
+.prose code {
+  background: var(--ctp-surface0);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--ctp-teal);
+}
+
+.prose pre {
+  background: var(--ctp-surface0);
+  padding: 0.75em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 0.75em;
+}
+
+.prose pre code {
+  background: none;
+  padding: 0;
+}

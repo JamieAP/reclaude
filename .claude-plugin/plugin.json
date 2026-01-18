@@ -1,0 +1,21 @@
+{
+  "name": "reclaude",
+  "version": "1.0.0",
+  "description": "Event and activity capture, history stitching and LLM analysis/compaction",
+  "author": {
+    "name": "Jamie P",
+    "url": "https://github.com/jamieap/reclaude"
+  },
+  "repository": "https://github.com/JamieAP/reclaude",
+  "license": "MIT",
+  "keywords": [
+    "capture",
+    "replay",
+    "record",
+    "learnings",
+    "memory",
+    "history",
+    "context",
+    "compaction"
+  ]
+}

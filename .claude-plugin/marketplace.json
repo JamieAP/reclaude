@@ -1,0 +1,17 @@
+{
+  "name": "reclaude",
+  "owner": {
+    "name": "Jamie P"
+  },
+  "metadata": {
+    "description": "Event and activity capture, history stitching and LLM analysis/compaction"
+  },
+  "plugins": [
+    {
+      "name": "reclaude",
+      "source": "./",
+      "description": "Event and activity capture, history stitching and LLM analysis/compaction",
+      "version": "1.0.0"
+    }
+  ]
+}
