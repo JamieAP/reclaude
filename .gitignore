@@ -34,3 +34,6 @@ htmlcov/
 .direnv/
 .claude/
 .ruff_cache/
+
+# Git worktrees
+.worktrees/
