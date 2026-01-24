@@ -428,7 +428,7 @@ class CaptureDB:
 
     def query_events(
         self,
-        event_type: str | None = None,
+        event_type: str | list[str] | None = None,
         session_id: str | None = None,
         since: datetime | None = None,
         cwd: str | None = None,
@@ -440,6 +440,7 @@ class CaptureDB:
         """Query events with optional filters.
 
         Args:
+            event_type: Single type or list of types to include (OR logic).
             cwd: Filter by cwd in metadata. If cwd_prefix=True, matches cwd or subdirs.
             cwd_prefix: If True, match cwd and subdirectories. If False, exact match only.
             metadata_filter: Dict of metadata key-value pairs to filter on (exact match).
@@ -449,8 +450,13 @@ class CaptureDB:
         params: list = []
 
         if event_type:
-            query += " AND event_type = ?"
-            params.append(event_type)
+            if isinstance(event_type, list):
+                placeholders = ",".join("?" * len(event_type))
+                query += f" AND event_type IN ({placeholders})"
+                params.extend(event_type)
+            else:
+                query += " AND event_type = ?"
+                params.append(event_type)
         session_id = _normalize_session_id(session_id)
         if session_id:
             query += " AND session_id = ?"

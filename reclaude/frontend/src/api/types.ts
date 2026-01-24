@@ -83,7 +83,7 @@ export interface PaginatedResponse<T> {
 
 // Query parameter types
 export interface EventsQueryParams {
-  event_type?: string;
+  event_type?: string[];
   session_id?: string;
   since?: string;
   cwd?: string;

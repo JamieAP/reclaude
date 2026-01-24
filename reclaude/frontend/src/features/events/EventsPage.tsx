@@ -40,8 +40,8 @@ export function EventsPage() {
       offset,
     };
 
-    if (filters.eventTypes.length === 1) {
-      params.event_type = filters.eventTypes[0];
+    if (filters.eventTypes.length > 0) {
+      params.event_type = filters.eventTypes;
     }
 
     if (filters.sessionId) {
@@ -61,14 +61,9 @@ export function EventsPage() {
     refetchInterval: isLive ? POLL_INTERVAL : false,
   });
 
-  // Filter client-side for multi-type selection, search, and deduplication
+  // Filter client-side for search and deduplication
   const filteredEvents = useMemo(() => {
     let events = data ?? [];
-
-    // Multi-type filtering (API only supports single type)
-    if (filters.eventTypes.length > 1) {
-      events = events.filter((e) => filters.eventTypes.includes(e.event_type));
-    }
 
     // Search filtering
     if (filters.search) {
@@ -91,7 +86,7 @@ export function EventsPage() {
     }
 
     return deduped;
-  }, [data, filters.eventTypes, filters.search]);
+  }, [data, filters.search]);
 
   // Keyboard navigation
   const { selectedIndex } = useKeyboardNavigation({

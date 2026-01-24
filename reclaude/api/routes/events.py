@@ -14,7 +14,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 @router.get("", response_model=list[SemanticEventResponse])
 def list_events(
-    event_type: str | None = Query(None, description="Filter by event type"),
+    event_type: list[str] | None = Query(None, description="Filter by event type(s) - include multiple for OR logic"),
     session_id: str | None = Query(None, description="Filter by session ID"),
     since: datetime | None = Query(None, description="Only events after this timestamp"),
     cwd: str | None = Query(None, description="Filter by working directory"),
@@ -25,7 +25,7 @@ def list_events(
 ) -> list[SemanticEventResponse]:
     """Query semantic events with optional filters."""
     events = db.query_events(
-        event_type=event_type,
+        event_type=event_type if event_type else None,
         session_id=session_id,
         since=since,
         cwd=cwd,
