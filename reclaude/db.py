@@ -58,6 +58,16 @@ class SemanticEventType:
     SUBAGENT_STOP = "subagent_stop"
     PERMISSION_REQUEST = "permission_request"
     NOTIFICATION = "notification"
+    # Task management (new todo system)
+    TASK_CREATE = "task_create"
+    TASK_UPDATE = "task_update"
+    TASK_GET = "task_get"
+    TASK_LIST = "task_list"
+    # Legacy todo
+    TODO_WRITE = "todo_write"
+    # Subagent lifecycle
+    SUBAGENT_SPAWN = "subagent_spawn"
+    SUBAGENT_OUTPUT = "subagent_output"
 
 
 @dataclass

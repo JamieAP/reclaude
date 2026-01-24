@@ -21,6 +21,15 @@ const EVENT_COLORS: Record<string, string> = {
   plan: 'var(--ctp-mauve)',
   compaction: 'var(--ctp-yellow)',
   learning: 'var(--ctp-pink)',
+  // Task management
+  task_create: 'var(--ctp-green)',
+  task_update: 'var(--ctp-yellow)',
+  task_get: 'var(--ctp-lavender)',
+  task_list: 'var(--ctp-lavender)',
+  todo_write: 'var(--ctp-peach)',
+  // Subagent lifecycle
+  subagent_spawn: 'var(--ctp-mauve)',
+  subagent_output: 'var(--ctp-mauve)',
 };
 
 export function RepoFilters({

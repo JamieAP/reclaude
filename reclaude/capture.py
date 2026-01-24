@@ -137,6 +137,285 @@ def _generate_edit_diff(file_path: str, old_string: str, new_string: str) -> tup
     return diff_content, lines_added, lines_removed
 
 
+# --- Task semantic event helpers ---
+
+
+def _capture_task_create(
+    tool_input: dict,
+    tool_result: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create TASK_CREATE semantic event."""
+    subject = tool_input.get("subject", "")
+    description = tool_input.get("description", "")
+
+    # Extract task_id from result (if creation succeeded)
+    result_content = tool_result.get("content", "")
+    task_id = None
+    if isinstance(result_content, str) and "id:" in result_content.lower():
+        # Parse "Created task with id: X" style output
+        for line in result_content.split("\n"):
+            if "id:" in line.lower():
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    task_id = parts[-1].strip()
+                    break
+
+    content = f"Task: {subject}\n\n{description}" if description else f"Task: {subject}"
+
+    metadata = {
+        "task_id": task_id,
+        "subject": subject,
+        "description": description[:500] if description else None,
+        "status": "pending",
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.TASK_CREATE,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_task_update(
+    tool_input: dict,
+    tool_result: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create TASK_UPDATE semantic event."""
+    task_id = tool_input.get("taskId")
+    new_status = tool_input.get("status")
+    new_subject = tool_input.get("subject")
+    new_description = tool_input.get("description")
+
+    # Track what changed
+    changes = []
+    if new_status:
+        changes.append(f"status={new_status}")
+    if new_subject:
+        changes.append("subject")
+    if new_description:
+        changes.append("description")
+
+    content = f"Task {task_id}: {', '.join(changes)}" if changes else f"Task {task_id}: updated"
+
+    metadata = {
+        "task_id": task_id,
+        "status": new_status,
+        "changes": changes,
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.TASK_UPDATE,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_task_get(
+    tool_input: dict,
+    tool_result: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create TASK_GET semantic event."""
+    task_id = tool_input.get("taskId")
+    is_error = tool_result.get("is_error", False)
+
+    content = f"Get task {task_id}" + (" (not found)" if is_error else "")
+
+    metadata = {
+        "task_id": task_id,
+        "found": not is_error,
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.TASK_GET,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_task_list(
+    tool_result: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create TASK_LIST semantic event."""
+    result_content = tool_result.get("content", "")
+
+    # Try to extract task count from output
+    task_count = 0
+    statuses: dict[str, int] = {}
+    if isinstance(result_content, str):
+        lines = result_content.split("\n")
+        for line in lines:
+            if line.strip().startswith("-") or line.strip().startswith("*"):
+                task_count += 1
+            # Try to count statuses
+            for status in ("pending", "in_progress", "completed"):
+                if status in line.lower():
+                    statuses[status] = statuses.get(status, 0) + 1
+
+    content = f"Listed {task_count} tasks" if task_count else "Listed tasks"
+
+    metadata = {
+        "task_count": task_count,
+        "statuses": statuses if statuses else None,
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.TASK_LIST,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_todo_write(
+    tool_input: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create TODO_WRITE semantic event (legacy tool)."""
+    todos = tool_input.get("todos", [])
+
+    # Build content from todos
+    content_lines = []
+    for todo in todos:
+        if isinstance(todo, dict):
+            status = todo.get("status", "pending")
+            content_lines.append(f"[{status}] {todo.get('content', '')}")
+        else:
+            content_lines.append(str(todo))
+
+    content = "\n".join(content_lines) if content_lines else "Updated todos"
+
+    metadata = {
+        "todo_count": len(todos),
+        "todos": todos[:10] if todos else None,  # Limit stored todos
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.TODO_WRITE,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_subagent_spawn(
+    tool_input: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create SUBAGENT_SPAWN semantic event."""
+    subagent_type = tool_input.get("subagent_type", "")
+    description = tool_input.get("description", "")
+    prompt = tool_input.get("prompt", "")
+    run_in_background = tool_input.get("run_in_background", False)
+
+    # Extract persona name if present
+    persona = None
+    if ":" in subagent_type:
+        persona = subagent_type.split(":")[-1]
+
+    content = f"Spawn {subagent_type}: {description}" if description else f"Spawn {subagent_type}"
+    if prompt:
+        content += f"\n\n{prompt[:500]}"
+
+    metadata = {
+        "subagent_type": subagent_type,
+        "persona": persona,
+        "description": description,
+        "run_in_background": run_in_background,
+        "prompt_length": len(prompt) if prompt else 0,
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.SUBAGENT_SPAWN,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
+def _capture_subagent_output(
+    tool_input: dict,
+    tool_result: dict,
+    session_id: str | None,
+    cwd: str | None,
+    transcript_path: str | None,
+    tool_event_id: int,
+    db: CaptureDB,
+) -> int | None:
+    """Create SUBAGENT_OUTPUT semantic event."""
+    task_id = tool_input.get("task_id")
+    is_error = tool_result.get("is_error", False)
+    result_content = tool_result.get("content", "")
+
+    has_output = bool(result_content and not is_error)
+    content = f"Output from task {task_id}" + (" (error)" if is_error else "")
+
+    metadata = {
+        "task_id": task_id,
+        "status": "error" if is_error else "success",
+        "has_output": has_output,
+        "output_length": len(str(result_content)) if result_content else 0,
+        "tool_event_id": tool_event_id,
+        "cwd": cwd,
+        "transcript_path": transcript_path,
+    }
+
+    return db.insert_event(
+        event_type=SemanticEventType.SUBAGENT_OUTPUT,
+        content=content,
+        session_id=session_id,
+        metadata=enrich_metadata(metadata),
+    )
+
+
 def capture_post_tool_use(payload: dict, db: CaptureDB) -> list[int]:
     """Capture all tool uses with full I/O."""
     tool_name = payload.get("tool_name", "")
@@ -302,6 +581,63 @@ def capture_post_tool_use(payload: dict, db: CaptureDB) -> list[int]:
                 added=len(lines),
                 removed=0,
             )
+
+    # --- Task semantic events ---
+    if tool_name == "TaskCreate":
+        task_event_id = _capture_task_create(
+            tool_input, tool_result, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_task_create", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "TaskUpdate":
+        task_event_id = _capture_task_update(
+            tool_input, tool_result, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_task_update", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "TaskGet":
+        task_event_id = _capture_task_get(
+            tool_input, tool_result, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_task_get", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "TaskList":
+        task_event_id = _capture_task_list(
+            tool_result, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_task_list", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "TodoWrite":
+        task_event_id = _capture_todo_write(
+            tool_input, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_todo_write", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "Task":
+        task_event_id = _capture_subagent_spawn(
+            tool_input, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_subagent_spawn", session=sid_short, event_id=task_event_id)
+
+    elif tool_name == "TaskOutput":
+        task_event_id = _capture_subagent_output(
+            tool_input, tool_result, session_id, cwd, transcript_path, tool_event_id, db
+        )
+        if task_event_id:
+            event_ids.append(task_event_id)
+            log.info("capture_subagent_output", session=sid_short, event_id=task_event_id)
 
     return event_ids
 

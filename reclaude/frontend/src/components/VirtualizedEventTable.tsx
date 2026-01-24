@@ -92,6 +92,33 @@ function getEventPreview(event: SemanticEvent): string {
     }
   }
 
+  // Task management events
+  if (event.event_type === 'task_create') {
+    const subject = event.metadata?.subject as string | undefined;
+    return subject ? `Create: ${subject}` : 'Create task';
+  }
+
+  if (event.event_type === 'task_update') {
+    const taskId = event.metadata?.task_id as string | undefined;
+    const status = event.metadata?.status as string | undefined;
+    return status ? `Task ${taskId}: → ${status}` : `Task ${taskId}: updated`;
+  }
+
+  if (event.event_type === 'subagent_spawn') {
+    const persona = event.metadata?.persona as string | undefined;
+    const subagentType = event.metadata?.subagent_type as string | undefined;
+    const description = event.metadata?.description as string | undefined;
+    const name = persona || subagentType || 'agent';
+    const desc = description ? `: ${description.slice(0, 50)}` : '';
+    return `Spawn ${name}${desc}`;
+  }
+
+  if (event.event_type === 'subagent_output') {
+    const taskId = event.metadata?.task_id as string | undefined;
+    const status = event.metadata?.status as string | undefined;
+    return `Output ${taskId} [${status}]`;
+  }
+
   return event.content.replace(/\n/g, ' ').slice(0, 120) + (event.content.length > 120 ? '...' : '');
 }
 

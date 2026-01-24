@@ -19,6 +19,15 @@ const EVENT_COLORS: Record<string, { bg: string; text: string }> = {
   compaction: { bg: 'var(--ctp-yellow)', text: 'var(--ctp-crust)' },
   plan: { bg: 'var(--ctp-mauve)', text: 'var(--ctp-crust)' },
   thinking: { bg: 'var(--ctp-lavender)', text: 'var(--ctp-crust)' },
+  // Task management
+  task_create: { bg: 'var(--ctp-green)', text: 'var(--ctp-crust)' },
+  task_update: { bg: 'var(--ctp-yellow)', text: 'var(--ctp-crust)' },
+  task_get: { bg: 'var(--ctp-lavender)', text: 'var(--ctp-crust)' },
+  task_list: { bg: 'var(--ctp-lavender)', text: 'var(--ctp-crust)' },
+  todo_write: { bg: 'var(--ctp-peach)', text: 'var(--ctp-crust)' },
+  // Subagent lifecycle
+  subagent_spawn: { bg: 'var(--ctp-mauve)', text: 'var(--ctp-crust)' },
+  subagent_output: { bg: 'var(--ctp-mauve)', text: 'var(--ctp-crust)' },
 };
 
 function getEventPreview(event: SemanticEvent): string {
@@ -73,6 +82,33 @@ function getEventPreview(event: SemanticEvent): string {
       const opStr = operation === 'write' ? ' [new]' : '';
       return `${displayPath}${statsStr}${opStr}`;
     }
+  }
+
+  // Task management events
+  if (event.event_type === 'task_create') {
+    const subject = event.metadata?.subject as string | undefined;
+    return subject ? `Create: ${subject}` : 'Create task';
+  }
+
+  if (event.event_type === 'task_update') {
+    const taskId = event.metadata?.task_id as string | undefined;
+    const status = event.metadata?.status as string | undefined;
+    return status ? `Task ${taskId}: → ${status}` : `Task ${taskId}: updated`;
+  }
+
+  if (event.event_type === 'subagent_spawn') {
+    const persona = event.metadata?.persona as string | undefined;
+    const subagentType = event.metadata?.subagent_type as string | undefined;
+    const description = event.metadata?.description as string | undefined;
+    const name = persona || subagentType || 'agent';
+    const desc = description ? `: ${description.slice(0, 50)}` : '';
+    return `Spawn ${name}${desc}`;
+  }
+
+  if (event.event_type === 'subagent_output') {
+    const taskId = event.metadata?.task_id as string | undefined;
+    const status = event.metadata?.status as string | undefined;
+    return `Output ${taskId} [${status}]`;
   }
 
   return event.content.replace(/\n/g, ' ').slice(0, 120) + (event.content.length > 120 ? '...' : '');
