@@ -1,7 +1,7 @@
 """
 Transcript extraction for semantic events.
 
-Extracts SUMMARY, ASSISTANT, PLAN, THINKING events from Claude Code transcripts.
+Extracts SUMMARY, ASSISTANT, PLAN, THINKING, TOOL_USE events from Claude Code transcripts.
 FILE_DIFF is extracted inline via PostToolUse hook (not here).
 """
 
@@ -147,10 +147,10 @@ class TranscriptExtractor:
             if self._is_duplicate(str(path), entry_key):
                 continue
 
-            event = self._extract_entry(entry, entries, i, msg_groups, session_id, git_ctx, str(path), entry_key)
-            if event:
-                event_type_str = event["event_type"]
-                self.db.insert_event(**event)
+            event_dicts = self._extract_entry(entry, entries, i, msg_groups, session_id, git_ctx, str(path), entry_key)
+            for event_dict in event_dicts:
+                event_type_str = event_dict["event_type"]
+                self.db.insert_event(**event_dict)
                 # Add to cache to prevent duplicates within same batch
                 self._known_dedup_keys.add(f"{path}:{entry_key}")
                 result.events_created += 1
@@ -283,8 +283,12 @@ class TranscriptExtractor:
         git_ctx: dict,
         transcript_path: str,
         entry_key: str,
-    ) -> dict | None:
-        """Extract a semantic event from a transcript entry."""
+    ) -> list[dict]:
+        """Extract semantic events from a transcript entry.
+
+        Returns a list of event dicts (may be empty, one, or multiple for
+        entries containing both text/thinking and tool_use blocks).
+        """
         entry_type = entry.get("type")
         uuid = entry.get("uuid") or entry.get("leafUuid")
         timestamp = entry.get("timestamp")
@@ -310,7 +314,7 @@ class TranscriptExtractor:
         if entry_type == "summary":
             summary_text = entry.get("summary", "")
             if summary_text:
-                return {
+                return [{
                     "event_type": SemanticEventType.COMPACTION,
                     "content": summary_text,
                     "session_id": session_id,
@@ -321,27 +325,27 @@ class TranscriptExtractor:
                         "subtype": "summary",
                         "leaf_uuid": entry.get("leafUuid"),
                     },
-                }
+                }]
 
         # USER_PROMPT extraction
         elif entry_type == "user":
             if entry.get("isMeta"):
-                return None  # Skip meta messages
+                return []  # Skip meta messages
 
             message = entry.get("message", {})
             content = message.get("content", "") if isinstance(message, dict) else str(message)
 
             # Skip tool results (content is a list or starts with JSON array)
             if isinstance(content, list):
-                return None
+                return []
             if isinstance(content, str) and content.strip().startswith("[{"):
-                return None
+                return []
 
             # Skip very short or empty
             if not content or len(content.strip()) < 5:
-                return None
+                return []
 
-            return {
+            return [{
                 "event_type": SemanticEventType.USER_PROMPT,
                 "content": content[:MAX_PROMPT_CONTENT],  # Truncate
                 "session_id": session_id,
@@ -351,16 +355,16 @@ class TranscriptExtractor:
                     "prompt_length": len(content),
                     "truncated": len(content) > MAX_PROMPT_CONTENT,
                 },
-            }
+            }]
 
-        # ASSISTANT extraction (includes THINKING and PLAN detection)
+        # ASSISTANT extraction (includes THINKING, PLAN, and TOOL_USE)
         elif entry_type == "assistant":
             message = entry.get("message", {})
             content_blocks = message.get("content", [])
             msg_id = message.get("id")
 
             if not content_blocks or not isinstance(content_blocks, list):
-                return None
+                return []
 
             # Get block types in this entry
             block_types = [b.get("type") for b in content_blocks if isinstance(b, dict)]
@@ -381,6 +385,8 @@ class TranscriptExtractor:
                         text_content += block.get("text", "") + "\n"
                 text_content = text_content.strip()
 
+            events: list[dict] = []
+
             # Priority: TEXT (could be PLAN) > THINKING-only
             # If both present, return TEXT with thinking noted in metadata
             if text_content:
@@ -399,9 +405,13 @@ class TranscriptExtractor:
                                 is_plan = True
                                 break
 
+                # Also check current entry for inline tool_use
+                if not is_plan and "tool_use" in block_types:
+                    is_plan = True
+
                 event_type = SemanticEventType.PLAN if is_plan else SemanticEventType.ASSISTANT
 
-                return {
+                events.append({
                     "event_type": event_type,
                     "content": text_content[:MAX_ASSISTANT_CONTENT],
                     "session_id": session_id,
@@ -412,11 +422,11 @@ class TranscriptExtractor:
                         "is_plan": is_plan,
                         "has_thinking": bool(thinking_text),
                     },
-                }
+                })
 
             # Thinking without text (thinking-only or thinking + tool_use)
             elif thinking_text:
-                return {
+                events.append({
                     "event_type": SemanticEventType.THINKING,
                     "content": thinking_text[:MAX_ASSISTANT_CONTENT],
                     "session_id": session_id,
@@ -426,6 +436,55 @@ class TranscriptExtractor:
                         "msg_id": msg_id,
                         "has_tool_use": "tool_use" in block_types,
                     },
-                }
+                })
 
-        return None
+            # Tool use extraction
+            if "tool_use" in block_types:
+                for block in content_blocks:
+                    if block.get("type") != "tool_use":
+                        continue
+                    tool_name = block.get("name", "unknown")
+                    tool_input = block.get("input", {})
+                    tool_id = block.get("id", "")
+
+                    # Find matching tool_result in subsequent entries
+                    tool_output = ""
+                    for later_idx in range(index + 1, min(index + 5, len(all_entries))):
+                        later = all_entries[later_idx]
+                        if later.get("type") != "user":
+                            continue
+                        later_content = later.get("message", {}).get("content", [])
+                        if not isinstance(later_content, list):
+                            continue
+                        for rb in later_content:
+                            if isinstance(rb, dict) and rb.get("tool_use_id") == tool_id:
+                                rc = rb.get("content", "")
+                                tool_output = rc if isinstance(rc, str) else json.dumps(rc, default=str)
+                                break
+                        if tool_output:
+                            break
+
+                    input_str = json.dumps(tool_input, indent=2, default=str)[:100_000]
+                    output_str = (tool_output or "")[:100_000]
+                    tool_content = f"Tool: {tool_name}\n\n--- INPUT ---\n{input_str}\n\n--- OUTPUT ---\n{output_str}"
+
+                    events.append({
+                        "event_type": SemanticEventType.TOOL_USE,
+                        "content": tool_content,
+                        "session_id": session_id,
+                        "timestamp": ts,
+                        "metadata": {
+                            **base_metadata,
+                            "tool_name": tool_name,
+                            "tool_id": tool_id,
+                            "msg_id": msg_id,
+                            "source": "transcript",
+                            "success": True,
+                            "input_length": len(input_str),
+                            "output_length": len(output_str),
+                        },
+                    })
+
+            return events
+
+        return []
