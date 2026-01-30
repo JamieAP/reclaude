@@ -52,6 +52,7 @@ def main() -> int:
     sp_sessions.add_argument("--all", action="store_true", help="Show sessions from all directories (default: cwd only)")
     sp_sessions.add_argument("--json", action="store_true", help="Output as JSON")
     sp_sessions.add_argument("--fzf", action="store_true", help="Interactive select with fzf, outputs cd+cb command")
+    sp_sessions.add_argument("--heal", action="store_true", help="Emit synthetic session_end for crashed sessions")
 
     # events
     sp_events = subparsers.add_parser("events", help="Show recent events")

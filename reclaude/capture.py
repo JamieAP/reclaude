@@ -15,6 +15,7 @@ import difflib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .db import CaptureDB, SemanticEventType, _normalize_session_id
@@ -917,6 +918,23 @@ def capture_notification(payload: dict, db: CaptureDB) -> int | None:
 
     log.info("notification", session=sid_short, notification_type=notification_type)
     return event_id
+
+
+def heal_orphaned_sessions(db: CaptureDB, stale_minutes: int = 30) -> int:
+    """Emit synthetic SESSION_END for orphaned sessions. Returns count healed."""
+    orphans = db.get_orphaned_sessions(stale_minutes=stale_minutes)
+    for session_id in orphans:
+        # Get the latest event timestamp for this session
+        latest = db.query_events(session_id=session_id, limit=1)
+        ts = latest[0].timestamp if latest else datetime.now(timezone.utc)
+        db.insert_event(
+            event_type=SemanticEventType.SESSION_END,
+            content="Session end inferred from stale activity",
+            timestamp=ts,
+            session_id=session_id,
+            metadata={"reason": "inferred_crash", "stale_minutes": stale_minutes},
+        )
+    return len(orphans)
 
 
 def _open_capture_db() -> CaptureDB | None:

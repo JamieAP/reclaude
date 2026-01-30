@@ -23,7 +23,7 @@ except ImportError:
 
 from reclaude.git import normalize_remote_url
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 from contextlib import contextmanager
@@ -724,6 +724,27 @@ class CaptureDB:
                 ORDER BY last_ts DESC
             """).fetchall()
         return [row["session_id"] for row in rows]
+
+    def get_orphaned_sessions(self, stale_minutes: int = 30) -> list[str]:
+        """Find sessions with SESSION_START but no SESSION_END and stale activity."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)).isoformat()
+        with self.connection() as conn:
+            rows = conn.execute("""
+                SELECT DISTINCT e.session_id
+                FROM semantic_events e
+                WHERE e.event_type = 'session_start'
+                  AND e.session_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM semantic_events e2
+                      WHERE e2.session_id = e.session_id
+                        AND e2.event_type = 'session_end'
+                  )
+                  AND (
+                      SELECT MAX(e3.timestamp) FROM semantic_events e3
+                      WHERE e3.session_id = e.session_id
+                  ) < ?
+            """, (cutoff,)).fetchall()
+        return [row[0] for row in rows]
 
     def get_sessions_with_info(
         self,
