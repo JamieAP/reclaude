@@ -68,6 +68,7 @@ def main() -> int:
     sp_events.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
     add_all_flag(sp_events, help="Search all repos (not just current)")
     sp_events.add_argument("--compact", action="store_true", help="Compact output for preview panes")
+    add_fzf_flag(sp_events, help="Interactive event browser with fzf")
     sp_events.add_argument("--id", type=int, help="Show a single event by ID")
 
     # chat - view conversation around an event
@@ -76,6 +77,7 @@ def main() -> int:
     add_session_flag(p_chat)
     p_chat.add_argument("--no-pager", action="store_true", help="Print to stdout instead of less")
     add_all_flag(p_chat, help="Show all sessions across all repos")
+    add_fzf_flag(p_chat, help="Pick session interactively with fzf")
 
     # files - files touched by Claude
     sp_files = subparsers.add_parser("files", help="Find files touched by Claude")
@@ -109,6 +111,7 @@ def main() -> int:
     add_full_flag(sp_learnings)
     sp_learnings.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
     add_all_flag(sp_learnings, help="Search all repos (not just current)")
+    add_session_flag(sp_learnings)
     sp_learnings.add_argument("--human", action="store_true", help="Human-readable semantic output")
     sp_learnings.add_argument("--extract", metavar="SESSION", help="Extract learnings from session")
     sp_learnings.add_argument("--commit", action="store_true", help="Save extracted learnings")
@@ -139,6 +142,8 @@ def main() -> int:
     p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index first")
     p_search.add_argument("--cwd", help="Scope search to this directory (default: current directory)")
     add_all_flag(p_search, help="Search all projects, not just current directory")
+    add_session_flag(p_search)
+    add_json_flag(p_search)
 
     # log
     log_parser = subparsers.add_parser("log", help="Tail the event log (pretty JSONL)")

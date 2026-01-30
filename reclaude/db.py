@@ -532,6 +532,7 @@ class CaptureDB:
         limit: int = 20,
         cwd: str | None = None,
         cwd_prefix: bool = True,
+        session_id: str | None = None,
     ) -> list[SemanticEvent]:
         """Full-text search over event content via FTS5."""
         sql = """
@@ -548,6 +549,9 @@ class CaptureDB:
             else:
                 sql += " AND e.event_type = ?"
                 params.append(event_type)
+        if session_id:
+            sql += " AND e.session_id = ?"
+            params.append(session_id)
         if cwd:
             if cwd_prefix:
                 sql += " AND (json_extract(e.metadata, '$.cwd') = ? OR json_extract(e.metadata, '$.cwd') LIKE ?)"
@@ -978,6 +982,7 @@ class CaptureDB:
         limit: int = 50,
         repo_root: str | None = None,
         remote_url: str | None = None,
+        session_id: str | None = None,
     ) -> list[Learning]:
         """Query learnings with optional filters.
 
@@ -987,10 +992,14 @@ class CaptureDB:
             since: Only return learnings after this timestamp.
             repo_root: Filter by repo root (for worktree reconciliation).
             remote_url: Filter by remote URL (canonical repo identifier).
+            session_id: Filter by session ID.
         """
         query = "SELECT * FROM learnings WHERE 1=1"
         params: list[str | int] = []
 
+        if session_id:
+            query += " AND session_id = ?"
+            params.append(session_id)
         if cwd:
             if cwd_prefix:
                 query += " AND (cwd = ? OR cwd LIKE ?)"

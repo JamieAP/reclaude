@@ -255,6 +255,70 @@ def _get_config_for_event(event: SemanticEvent) -> EventTypeConfig | None:
     return None
 
 
+def _fzf_events(events: list[SemanticEvent]) -> int:
+    """Interactive event browser with fzf."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("fzf"):
+        print("fzf not found in PATH", file=sys.stderr)
+        return 1
+
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    RST = "\033[0m"
+
+    reclaude = f"{sys.executable} -m reclaude.cli"
+
+    lines = []
+    for e in events:
+        ts = e.timestamp.strftime("%m-%d %H:%M")
+        etype = e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type)
+        preview = e.content.replace("\n", " ")[:100]
+        line = f"{e.id}\t{DIM}{ts}{RST}  {CYAN}{etype:16s}{RST}  {DIM}{preview}{RST}"
+        lines.append(line)
+
+    fzf_input = "\n".join(lines)
+
+    preview_cmd = f"{reclaude} chat {{1}} --no-pager 2>/dev/null"
+
+    color_scheme = ",".join([
+        "bg+:#1a1a2e", "fg+:#e0e0e0", "hl:#56b6c2", "hl+:#56b6c2",
+        "pointer:#c678dd", "marker:#98c379", "border:#3b3b5c",
+        "header:#888888", "info:#555555", "prompt:#c678dd",
+        "gutter:#0e0e1a", "preview-bg:#0e0e1a",
+    ])
+
+    try:
+        result = subprocess.run(
+            ["fzf", "--ansi",
+             "--delimiter=\t", "--with-nth=2..",
+             "--height=80%", "--reverse",
+             "--preview", preview_cmd,
+             "--preview-window=right,55%,wrap,border-left",
+             f"--color={color_scheme}",
+             "--border=rounded", "--margin=1,2", "--padding=1,0",
+             "--header=  events  \u21b5 open chat  esc quit",
+             "--header-first"],
+            input=fzf_input, capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        print("fzf not found in PATH", file=sys.stderr)
+        return 1
+
+    if result.returncode != 0:
+        return 0
+
+    selected = result.stdout.strip()
+    if not selected:
+        return 0
+
+    event_id = selected.split("\t")[0]
+    parts = reclaude.split()
+    subprocess.run([parts[0], *parts[1:], "chat", event_id])
+    return 0
+
+
 def cmd_events(args: argparse.Namespace) -> int:
     """Show recent events with optional type filtering and semantic search.
 
@@ -367,6 +431,10 @@ def cmd_events(args: argparse.Namespace) -> int:
     if not events:
         print(empty_message)
         return 0
+
+    # fzf interactive mode
+    if args.fzf:
+        return _fzf_events(list(reversed(events)))
 
     # JSON output
     if args.json:

@@ -310,8 +310,16 @@ def cmd_learnings(args: argparse.Namespace) -> int:
     if semantic_query:
         return _cmd_learnings_semantic(db, args, semantic_query)
 
+    # Session filtering
+    session_id = None
+    if args.session:
+        from .cli_utils import _session_filter
+        session_id = _session_filter(db, args.session)
+        if not session_id:
+            return 1
+
     # Regular listing
-    learnings = db.query_learnings(limit=args.limit)
+    learnings = db.query_learnings(limit=args.limit, session_id=session_id)
 
     if not learnings:
         print("No learnings found")

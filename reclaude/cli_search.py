@@ -205,8 +205,15 @@ def cmd_search(args: argparse.Namespace) -> int:
     else:
         cwd = args.cwd or os.getcwd()
 
+    session_id = None
+    if args.session:
+        from .cli_utils import _session_filter
+        session_id = _session_filter(db, args.session)
+        if not session_id:
+            return 1
+
     try:
-        results = db.search_events(query, event_type=event_type, cwd=cwd, limit=limit)
+        results = db.search_events(query, event_type=event_type, cwd=cwd, limit=limit, session_id=session_id)
     except Exception as e:
         if "no such table" in str(e):
             print("FTS index not built yet. Run: reclaude search --rebuild", file=sys.stderr)
@@ -215,6 +222,13 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     if not results:
         print("No results.")
+        return 0
+
+    if args.json:
+        import json as _json
+        from .cli_utils import _event_to_dict
+        payload = [_event_to_dict(e, full=args.verbose) for e in results]
+        print(_json.dumps(payload, indent=2, default=str))
         return 0
 
     verbose = args.verbose
