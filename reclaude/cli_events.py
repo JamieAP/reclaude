@@ -96,6 +96,155 @@ def _format_event_line(
     return f"[{ts}] {sid} {preview}"
 
 
+def _format_compact(event: SemanticEvent) -> str:
+    """Compact single-line format for fzf preview panes."""
+    from .cli_utils import _relative_time
+
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    BOLD = "\033[1m"
+    RST = "\033[0m"
+
+    age = _relative_time(event.timestamp)
+    meta = event.metadata or {}
+    etype = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+
+    if etype == "file_diff":
+        file_path = meta.get("file_path", "?")
+        # Just the filename
+        fname = file_path.rsplit("/", 1)[-1]
+        op = meta.get("operation", "edit")
+        added = meta.get("lines_added", 0)
+        removed = meta.get("lines_removed", 0)
+        return f"{DIM}{age:>8s}{RST}  {YELLOW}{op:<6s}{RST} {BOLD}{fname}{RST} {GREEN}+{added}{RST}/{RED}-{removed}{RST}"
+
+    if etype == "tool_use":
+        tool = meta.get("tool_name", "?")
+        success = meta.get("success", True)
+        dot = f"{GREEN}✓{RST}" if success else f"{RED}✗{RST}"
+        # Extract meaningful preview from content
+        content = event.content
+        preview = ""
+        if "--- INPUT ---" in content:
+            inp = content.split("--- INPUT ---")[1]
+            if "--- OUTPUT ---" in inp:
+                inp = inp.split("--- OUTPUT ---")[0]
+            inp = inp.strip()
+            # For Bash, show the command; for others, show a short summary
+            if tool == "Bash":
+                import json as _json
+                try:
+                    data = _json.loads(inp)
+                    cmd = data.get("command", data.get("description", ""))
+                    desc = data.get("description", "")
+                    preview = desc or cmd[:60]
+                except (ValueError, AttributeError):
+                    preview = inp[:60].replace("\n", " ")
+            elif tool == "Edit":
+                import json as _json2
+                try:
+                    data = _json2.loads(inp)
+                    fp = data.get("file_path", "")
+                    fname = fp.rsplit("/", 1)[-1] if fp else ""
+                    preview = fname
+                except (ValueError, AttributeError):
+                    preview = inp[:60].replace("\n", " ")
+            elif tool == "Read":
+                import json as _json3
+                try:
+                    data = _json3.loads(inp)
+                    fp = data.get("file_path", "")
+                    preview = fp.rsplit("/", 1)[-1] if fp else ""
+                except (ValueError, AttributeError):
+                    preview = inp[:60].replace("\n", " ")
+            else:
+                # Strip JSON wrapper noise for other tools
+                inp_clean = inp.replace("\n", " ").strip()
+                if inp_clean.startswith("{"):
+                    import json as _json4
+                    try:
+                        data = _json4.loads(inp_clean)
+                        # Show first string value as preview
+                        for v in data.values():
+                            if isinstance(v, str) and v:
+                                preview = v[:60]
+                                break
+                    except (ValueError, AttributeError):
+                        pass
+                if not preview:
+                    preview = inp_clean[:60]
+        if not preview:
+            preview = content[:60].replace("\n", " ").strip()
+        return f"{DIM}{age:>8s}{RST}  {dot} {CYAN}{tool:<8s}{RST} {DIM}{preview}{RST}"
+
+    if etype == "user_prompt":
+        preview = event.content[:100].replace("\n", " ").strip()
+        return f"{DIM}{age:>8s}{RST}  {BOLD}▶ {preview}{RST}"
+
+    if etype == "plan":
+        preview = event.content[:100].replace("\n", " ").strip()
+        return f"{DIM}{age:>8s}{RST}  {YELLOW}◆{RST} {preview}"
+
+    # Fallback for compaction, notification, etc.
+    preview = event.content[:80].replace("\n", " ").strip()
+    label = etype.replace("_", " ")
+    return f"{DIM}{age:>8s}{RST}  {DIM}{label}: {preview}{RST}"
+
+
+def _tool_key(event: SemanticEvent) -> str | None:
+    """Return tool name if this is a tool_use event, else None."""
+    etype = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+    if etype == "tool_use":
+        return (event.metadata or {}).get("tool_name", "?")
+    return None
+
+
+def _format_compact_rolled(events: list[SemanticEvent], count: int) -> str:
+    """Format a rolled-up group of same-tool events."""
+    from .cli_utils import _relative_time
+
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    RST = "\033[0m"
+
+    last = events[-1]
+    age = _relative_time(last.timestamp)
+    tool = (last.metadata or {}).get("tool_name", "?")
+    all_ok = all((e.metadata or {}).get("success", True) for e in events)
+    dot = f"{GREEN}✓{RST}" if all_ok else f"{RED}✗{RST}"
+    return f"{DIM}{age:>8s}{RST}  {dot} {CYAN}{tool:<8s}{RST} {DIM}×{count}{RST}"
+
+
+def _print_compact_rolled(events: list[SemanticEvent]) -> None:
+    """Print compact timeline with consecutive same-tool events rolled up."""
+    i = 0
+    while i < len(events):
+        key = _tool_key(events[i])
+        if key is None:
+            print(_format_compact(events[i]))
+            i += 1
+            continue
+
+        # Collect consecutive events with same tool
+        group = [events[i]]
+        j = i + 1
+        while j < len(events) and _tool_key(events[j]) == key:
+            group.append(events[j])
+            j += 1
+
+        if len(group) >= 3:
+            print(_format_compact_rolled(group, len(group)))
+        else:
+            for e in group:
+                print(_format_compact(e))
+        i = j
+
+
 def _get_config_for_event(event: SemanticEvent) -> EventTypeConfig | None:
     """Get the EventTypeConfig for a given event based on its event_type."""
     event_type_str = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
@@ -116,10 +265,25 @@ def cmd_events(args: argparse.Namespace) -> int:
     - --type tool --semantic "query": semantic search over tools
     """
     db = CaptureDB()
+
+    # Single event by ID
+    event_id = args.id
+    if event_id is not None:
+        event = db.get_event_by_id(event_id)
+        if not event:
+            print(f"No event with id {event_id}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(_event_to_dict(event), indent=2, default=str))
+        else:
+            print(f"[{event.timestamp}] {event.event_type} (id={event.id}, session={_short_sid(event.session_id)})\n")
+            print(event.content)
+        return 0
+
     session_id = _session_filter(db, args.session)
 
     # Parse --type argument
-    type_arg = getattr(args, "type", None)
+    type_arg = args.type
     requested_types: list[str] = []
     if type_arg:
         requested_types = [t.strip().lower() for t in type_arg.split(",") if t.strip()]
@@ -132,7 +296,7 @@ def cmd_events(args: argparse.Namespace) -> int:
             return 2
 
     # Check for semantic search mode
-    semantic_query = getattr(args, "semantic", None)
+    semantic_query = args.semantic
     if semantic_query:
         if not requested_types:
             # Default to all types for semantic search
@@ -209,6 +373,44 @@ def cmd_events(args: argparse.Namespace) -> int:
         print(json.dumps([_event_to_dict(e, full=args.full) for e in reversed(events)], indent=2, default=str))
         return 0
 
+    # Compact output (for fzf preview panes)
+    if args.compact:
+        DIM = "\033[2m"
+        BOLD = "\033[1m"
+        RST = "\033[0m"
+
+        # Show session path as header if filtering by session
+        if session_id:
+            from .cli_status import _short_path
+            start_cwd = db._get_session_start_cwd(session_id)
+            cwd = start_cwd or db._get_session_cwd(session_id)
+            if cwd:
+                print(f"{BOLD}{_short_path(cwd)}{RST}")
+                print()
+
+        # Filter out user_prompts from main timeline (shown separately below)
+        timeline_events = [
+            e for e in reversed(events)
+            if (e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type))
+            != "user_prompt"
+        ]
+        _print_compact_rolled(timeline_events)
+
+        # Bottom section: last 4 user prompts
+        if session_id:
+            prompts = db.query_events(
+                event_type="user_prompt", session_id=session_id, limit=4
+            )
+            if prompts:
+                print()
+                print(f"{DIM}{'─' * 44}{RST}")
+                print(f"{DIM} prompts{RST}")
+                print(f"{DIM}{'─' * 44}{RST}")
+                for p in reversed(prompts):
+                    print(_format_compact(p))
+
+        return 0
+
     # Human-readable output
     for event in reversed(events):
         config = _get_config_for_event(event)
@@ -277,7 +479,7 @@ def _cmd_events_semantic(
     # Get context filter (unless --all)
     remote_url = None
     context_label = ""
-    if not getattr(args, "all", False):
+    if not args.all:
         ctx = get_git_context(os.getcwd())
         remote_url = ctx.get("remote_url")
         if remote_url:

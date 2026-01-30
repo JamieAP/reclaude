@@ -38,7 +38,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_sessions(args: argparse.Namespace) -> int:
     db = CaptureDB()
 
-    if getattr(args, "heal", False):
+    if args.heal:
         from .capture import heal_orphaned_sessions
         healed = heal_orphaned_sessions(db)
         print(f"Healed {healed} orphaned sessions")
@@ -52,7 +52,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         return 0
 
     # Filter to cwd by default, --all shows all directories
-    if not getattr(args, "all", False):
+    if not args.all:
         here = os.getcwd()
         sessions = [
             s for s in sessions
@@ -61,7 +61,7 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
     sessions = sessions[: args.limit]
 
-    if getattr(args, "fzf", False):
+    if args.fzf:
         return _fzf_select(sessions)
 
     if args.json:

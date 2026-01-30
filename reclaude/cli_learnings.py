@@ -102,7 +102,7 @@ def _cmd_learnings_semantic(db: CaptureDB, args: argparse.Namespace, query: str)
     # Get optional repo filter from current context
     remote_url = None
     repo_root = None
-    if not getattr(args, "all", False):
+    if not args.all:
         ctx = get_git_context(os.getcwd())
         remote_url = ctx.get("remote_url")
         repo_root = ctx.get("repo_root")
@@ -115,8 +115,8 @@ def _cmd_learnings_semantic(db: CaptureDB, args: argparse.Namespace, query: str)
     results = db.query_learnings_semantic(
         query_embedding=query_embedding,
         limit=args.limit,
-        remote_url=remote_url if not getattr(args, "all", False) else None,
-        repo_root=repo_root if not getattr(args, "all", False) else None,
+        remote_url=remote_url if not args.all else None,
+        repo_root=repo_root if not args.all else None,
     )
 
     get_logger().info("semantic_search", query=query, results=len(results))
@@ -126,7 +126,7 @@ def _cmd_learnings_semantic(db: CaptureDB, args: argparse.Namespace, query: str)
         return 0
 
     # Output formatting
-    use_human = getattr(args, "human", False)
+    use_human = args.human
     use_json = args.json
 
     if use_json:
@@ -295,18 +295,18 @@ def cmd_learnings(args: argparse.Namespace) -> int:
     db = CaptureDB()
 
     # Check for extract mode
-    extract_session = getattr(args, "extract", None)
+    extract_session = args.extract
     if extract_session:
         session_id = _resolve_session(db, extract_session)
         if not session_id:
             return 2
-        return _cmd_learnings_extract(db, session_id, commit=getattr(args, "commit", False))
+        return _cmd_learnings_extract(db, session_id, commit=args.commit)
 
     # Ensure embeddings are up to date for semantic search
     _ensure_learnings_embedded(db)
 
     # Check for semantic search mode
-    semantic_query = getattr(args, "semantic", None)
+    semantic_query = args.semantic
     if semantic_query:
         return _cmd_learnings_semantic(db, args, semantic_query)
 

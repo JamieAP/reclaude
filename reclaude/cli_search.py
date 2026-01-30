@@ -179,7 +179,7 @@ def _fzf_mode(results: list) -> int:
 def cmd_search(args: argparse.Namespace) -> int:
     db = CaptureDB()
 
-    if getattr(args, "rebuild", False):
+    if args.rebuild:
         print("Rebuilding FTS index...", end=" ", flush=True)
         n = db.rebuild_fts()
         print(f"done ({n} rows)")
@@ -187,23 +187,23 @@ def cmd_search(args: argparse.Namespace) -> int:
             return 0
 
     parts = [" ".join(args.query)]
-    for t in getattr(args, "and_terms", []):
+    for t in args.and_terms:
         parts.append(f"AND {t}")
-    for t in getattr(args, "or_terms", []):
+    for t in args.or_terms:
         parts.append(f"OR {t}")
-    for t in getattr(args, "not_terms", []):
+    for t in args.not_terms:
         parts.append(f"NOT {t}")
     query = " ".join(parts)
-    event_type = getattr(args, "event_type", None)
+    event_type = args.event_type
     # "chat" is a shortcut for conversation types
     if event_type == "chat":
         event_type = ["user_prompt", "assistant", "plan"]
-    limit = getattr(args, "limit", 20)
+    limit = args.limit
 
-    if getattr(args, "all", False):
+    if args.all:
         cwd = None
     else:
-        cwd = getattr(args, "cwd", None) or os.getcwd()
+        cwd = args.cwd or os.getcwd()
 
     try:
         results = db.search_events(query, event_type=event_type, cwd=cwd, limit=limit)
@@ -217,8 +217,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         print("No results.")
         return 0
 
-    verbose = getattr(args, "verbose", False)
-    use_fzf = getattr(args, "fzf", False)
+    verbose = args.verbose
+    use_fzf = args.fzf
 
     if use_fzf:
         return _fzf_mode(results)

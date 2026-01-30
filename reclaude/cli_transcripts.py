@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -208,6 +211,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("No archived transcripts")
         return 0
 
+    if args.fzf:
+        return _fzf_list(transcripts)
+
     for t in transcripts:
         ts_str = t.archived_at.strftime("%Y-%m-%d %H:%M")
         size_str = format_size(t.size_bytes)
@@ -220,6 +226,103 @@ def cmd_list(args: argparse.Namespace) -> int:
 
         print(f"[{ts_str}] {t.session_id[:12]}... {size_str} → {compressed_str}{parent_marker} {project}")
 
+    return 0
+
+
+def _fzf_list(transcripts: list) -> int:
+    """Interactive transcript selection with fzf, enter opens show."""
+    if not shutil.which("fzf"):
+        print("fzf not found in PATH", file=sys.stderr)
+        return 1
+
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    BOLD = "\033[1m"
+    GREEN = "\033[32m"
+    RST = "\033[0m"
+
+    reclaude = f"{sys.executable} -m reclaude.cli"
+
+    lines = []
+    for t in transcripts:
+        ts_str = t.archived_at.strftime("%Y-%m-%d %H:%M")
+        size_str = format_size(t.size_bytes)
+        short_id = t.session_id[:12]
+        project = ""
+        if t.metadata.get("cwd"):
+            project = t.metadata["cwd"].rstrip("/").rsplit("/", 1)[-1]
+        sub = f"{DIM}sub{RST}" if t.parent_session_id else "   "
+
+        line = (
+            f"{t.session_id}\t"
+            f"{DIM}{ts_str}{RST}  "
+            f"{CYAN}{short_id}{RST}  "
+            f"{sub} {BOLD}{project:<18s}{RST} "
+            f"{DIM}{size_str:>8s}{RST}"
+        )
+        lines.append(line)
+
+    fzf_input = "\n".join(lines)
+
+    # Preview: summary as title, then transcript content
+    preview_cmd = (
+        f"{reclaude} session-summary {{1}} 2>/dev/null; "
+        f"echo; echo '───────────────────────────────'; "
+        f"{reclaude} transcripts show {{1}} 2>/dev/null | head -60"
+    )
+
+    color_scheme = ",".join([
+        "bg+:#1a1a2e",
+        "fg+:#e0e0e0",
+        "hl:#56b6c2",
+        "hl+:#56b6c2",
+        "pointer:#c678dd",
+        "marker:#98c379",
+        "border:#3b3b5c",
+        "header:#888888",
+        "info:#555555",
+        "prompt:#c678dd",
+        "gutter:#0e0e1a",
+        "preview-bg:#0e0e1a",
+    ])
+
+    try:
+        result = subprocess.run(
+            [
+                "fzf", "--ansi",
+                "--delimiter=\t",
+                "--with-nth=2..",
+                "--height=80%", "--reverse",
+                "--preview", preview_cmd,
+                "--preview-window=right,55%,wrap,border-left",
+                f"--color={color_scheme}",
+                "--border=rounded",
+                "--margin=1,2",
+                "--padding=1,0",
+                "--header=  transcripts  ↵ show  esc quit",
+                "--header-first",
+            ],
+            input=fzf_input,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print("fzf not found in PATH", file=sys.stderr)
+        return 1
+
+    if result.returncode != 0:
+        return 0
+
+    selected = result.stdout.strip()
+    if not selected:
+        return 0
+
+    session_id = selected.split("\t")[0]
+    # Open full transcript in pager
+    subprocess.run(
+        f"{reclaude} transcripts show {session_id} | less -R",
+        shell=True,
+    )
     return 0
 
 
