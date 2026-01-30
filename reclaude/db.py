@@ -189,8 +189,9 @@ class CaptureDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_semantic_type ON semantic_events(event_type)"
             )
+            conn.execute("DROP INDEX IF EXISTS idx_semantic_session")
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_semantic_session ON semantic_events(session_id)"
+                "CREATE INDEX IF NOT EXISTS idx_semantic_session_ts ON semantic_events(session_id, timestamp DESC)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_semantic_timestamp ON semantic_events(timestamp)"
@@ -382,6 +383,29 @@ class CaptureDB:
                 "CREATE INDEX IF NOT EXISTS idx_transcripts_parent ON session_transcripts(parent_session_id)"
             )
 
+            # FTS5 index over event content
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+                    content,
+                    content='semantic_events',
+                    content_rowid='id'
+                )
+            """)
+            # Auto-sync triggers
+            for trigger_sql in [
+                """CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON semantic_events BEGIN
+                    INSERT INTO events_fts(rowid, content) VALUES (new.id, new.content);
+                END""",
+                """CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON semantic_events BEGIN
+                    INSERT INTO events_fts(events_fts, rowid, content) VALUES('delete', old.id, old.content);
+                END""",
+                """CREATE TRIGGER IF NOT EXISTS events_fts_au AFTER UPDATE ON semantic_events BEGIN
+                    INSERT INTO events_fts(events_fts, rowid, content) VALUES('delete', old.id, old.content);
+                    INSERT INTO events_fts(rowid, content) VALUES (new.id, new.content);
+                END""",
+            ]:
+                conn.execute(trigger_sql)
+
             # Transcript scan state for incremental extraction
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS transcript_scan_state (
@@ -441,6 +465,7 @@ class CaptureDB:
         event_type: str | list[str] | None = None,
         session_id: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         cwd: str | None = None,
         cwd_prefix: bool = True,
         limit: int = 100,
@@ -474,6 +499,9 @@ class CaptureDB:
         if since:
             query += " AND timestamp >= ?"
             params.append(since.isoformat())
+        if until:
+            query += " AND timestamp < ?"
+            params.append(until.isoformat())
         if cwd:
             if cwd_prefix:
                 # Match cwd or any subdirectory
@@ -496,6 +524,52 @@ class CaptureDB:
             rows = conn.execute(query, params).fetchall()
 
         return [self._row_to_event(row) for row in rows]
+
+    def search_events(
+        self,
+        query: str,
+        event_type: str | list[str] | None = None,
+        limit: int = 20,
+        cwd: str | None = None,
+        cwd_prefix: bool = True,
+    ) -> list[SemanticEvent]:
+        """Full-text search over event content via FTS5."""
+        sql = """
+            SELECT e.* FROM events_fts f
+            JOIN semantic_events e ON e.id = f.rowid
+            WHERE events_fts MATCH ?
+        """
+        params: list = [query]
+        if event_type:
+            if isinstance(event_type, list):
+                placeholders = ",".join("?" * len(event_type))
+                sql += f" AND e.event_type IN ({placeholders})"
+                params.extend(event_type)
+            else:
+                sql += " AND e.event_type = ?"
+                params.append(event_type)
+        if cwd:
+            if cwd_prefix:
+                sql += " AND (json_extract(e.metadata, '$.cwd') = ? OR json_extract(e.metadata, '$.cwd') LIKE ?)"
+                params.append(cwd)
+                params.append(cwd + "/%")
+            else:
+                sql += " AND json_extract(e.metadata, '$.cwd') = ?"
+                params.append(cwd)
+        sql += " ORDER BY f.rank LIMIT ?"
+        params.append(limit)
+
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    def rebuild_fts(self) -> int:
+        """Rebuild FTS index from scratch. Returns rows indexed."""
+        with self.connection() as conn:
+            conn.execute("INSERT INTO events_fts(events_fts) VALUES('rebuild')")
+            conn.commit()
+            row = conn.execute("SELECT count(*) FROM events_fts").fetchone()
+            return row[0]
 
     def get_event_by_id(self, event_id: int) -> SemanticEvent | None:
         with self.connection() as conn:
@@ -639,8 +713,26 @@ class CaptureDB:
         # Sort by last_event_at descending
         return sorted(combined.values(), key=lambda x: x["last_event_at"], reverse=True)
 
-    def get_sessions_with_info(self) -> list[tuple[str, datetime, int, str | None]]:
-        """Get sessions with last event timestamp, event count, and cwd."""
+    def get_session_ids(self) -> list[str]:
+        """Get session IDs ordered by most recent activity. Lightweight - no per-session queries."""
+        with self.connection() as conn:
+            rows = conn.execute("""
+                SELECT session_id, MAX(timestamp) as last_ts
+                FROM semantic_events
+                WHERE session_id IS NOT NULL AND session_id != ''
+                GROUP BY session_id
+                ORDER BY last_ts DESC
+            """).fetchall()
+        return [row["session_id"] for row in rows]
+
+    def get_sessions_with_info(
+        self,
+    ) -> list[tuple[str, datetime, int, str | None, str | None, bool]]:
+        """Get sessions with last event timestamp, event count, cwd, start_cwd, and active status.
+
+        Returns:
+            List of tuples: (session_id, last_ts, event_count, cwd, start_cwd, is_active)
+        """
         with self.connection() as conn:
             rows = conn.execute("""
                 SELECT
@@ -659,8 +751,11 @@ class CaptureDB:
                 ts = datetime.fromisoformat(row["last_ts"].replace("Z", "+00:00"))
             except (ValueError, AttributeError):
                 ts = datetime.now(timezone.utc)
-            cwd = self._get_session_cwd(row["session_id"])
-            result.append((row["session_id"], ts, row["cnt"], cwd))
+            session_id = row["session_id"]
+            cwd = self._get_session_cwd(session_id)
+            start_cwd = self._get_session_start_cwd(session_id)
+            is_active = self._is_session_active(session_id, ts)
+            result.append((session_id, ts, row["cnt"], cwd, start_cwd, is_active))
         return result
 
     def _get_session_cwd(self, session_id: str) -> str | None:
@@ -678,6 +773,36 @@ class CaptureDB:
             except (json.JSONDecodeError, TypeError):
                 pass
         return None
+
+    def _get_session_start_cwd(self, session_id: str) -> str | None:
+        """Get the cwd from the session's first event (for resuming)."""
+        with self.connection() as conn:
+            row = conn.execute("""
+                SELECT metadata FROM semantic_events
+                WHERE session_id = ? AND metadata LIKE '%"cwd"%'
+                ORDER BY timestamp ASC LIMIT 1
+            """, (session_id,)).fetchone()
+        if row:
+            try:
+                meta = json.loads(row["metadata"])
+                return meta.get("cwd")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return None
+
+    def _is_session_active(self, session_id: str, last_ts: datetime) -> bool:
+        """Check if session is active (last lifecycle event is not session_end, and recent activity)."""
+        with self.connection() as conn:
+            row = conn.execute("""
+                SELECT event_type FROM semantic_events
+                WHERE session_id = ? AND event_type IN ('session_start', 'session_end')
+                ORDER BY timestamp DESC LIMIT 1
+            """, (session_id,)).fetchone()
+        if row and row["event_type"] == "session_end":
+            return False
+        # Consider active if last event within 30 minutes
+        now = datetime.now(timezone.utc)
+        return (now - last_ts).total_seconds() < 1800
 
     def get_session_extended_stats(self, session_id: str) -> dict:
         """Get extended stats for a session including repo, branches, line counts, etc."""

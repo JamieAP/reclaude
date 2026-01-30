@@ -26,9 +26,12 @@ from .cli_context import cmd_context
 from .cli_events import cmd_events
 from .cli_focus import cmd_focus
 from .cli_learnings import cmd_learn, cmd_learnings
+from .cli_chat import cmd_chat
+from .cli_plans import cmd_plans_sync
+from .cli_search import cmd_search
 from .cli_files import cmd_files
 from .cli_server import cmd_log, cmd_path, cmd_ui
-from .cli_status import cmd_sessions, cmd_status
+from .cli_status import cmd_session_summary, cmd_sessions, cmd_status
 from .cli_transcripts import cmd_transcripts
 
 
@@ -46,7 +49,9 @@ def main() -> int:
     # sessions
     sp_sessions = subparsers.add_parser("sessions", help="List recent sessions")
     sp_sessions.add_argument("limit", type=int, nargs="?", default=10, help="Number of sessions")
+    sp_sessions.add_argument("--all", action="store_true", help="Show sessions from all directories (default: cwd only)")
     sp_sessions.add_argument("--json", action="store_true", help="Output as JSON")
+    sp_sessions.add_argument("--fzf", action="store_true", help="Interactive select with fzf, outputs cd+cb command")
 
     # events
     sp_events = subparsers.add_parser("events", help="Show recent events")
@@ -57,6 +62,13 @@ def main() -> int:
     sp_events.add_argument("--full", action="store_true", help="Show full content")
     sp_events.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
     sp_events.add_argument("--all", action="store_true", help="Search all repos (not just current)")
+    sp_events.add_argument("--compact", action="store_true", help="Compact output for preview panes")
+    sp_events.add_argument("--id", type=int, help="Show a single event by ID")
+
+    # chat - view conversation around an event
+    p_chat = subparsers.add_parser("chat", help="View conversation around an event")
+    p_chat.add_argument("event_id", type=int, help="Event ID to navigate to")
+    p_chat.add_argument("--no-pager", action="store_true", help="Print to stdout instead of less")
 
     # files - files touched by Claude
     sp_files = subparsers.add_parser("files", help="Find files touched by Claude")
@@ -69,11 +81,13 @@ def main() -> int:
     sp_files.add_argument("--stream", action="store_true", help="Stream paths live, poll for new (Ctrl+C to stop)")
 
     # context
-    sp_context = subparsers.add_parser("context", help="Emit LLM-ready session context")
-    sp_context.add_argument("--session", "-s", help="Session ID (default: latest)")
+    sp_context = subparsers.add_parser("context", help="Emit LLM-ready session context for cwd")
+    sp_context.add_argument("--session", "-s", help="Session ID or prefix (default: latest in cwd)")
     sp_context.add_argument("--since", help="Start from timestamp (1h, 24h, 7d, or ISO-8601)")
     sp_context.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
-    sp_context.add_argument("--full", action="store_true", help="Include full event content")
+    sp_context.add_argument("--budget", type=int, default=16000, help="Character budget (default: 16000, 0=unlimited)")
+    sp_context.add_argument("--full", action="store_true", help="No budget limit (equivalent to --budget 0)")
+    sp_context.add_argument("--chain", action="store_true", help="Follow session chain through clear transitions")
     sp_context.add_argument("limit", type=int, nargs="?", default=100, help="Max events to include")
 
     # learn
@@ -98,14 +112,30 @@ def main() -> int:
         "scale",
         nargs="?",
         default="hour",
-        choices=["hour", "8hour", "day", "week"],
-        help="Time window: hour (1h), 8hour (8h), day (24h), week (7d)",
+        choices=["15min", "hour", "8hour", "day", "week"],
+        help="Time window: 15min, hour (1h), 8hour (8h), day (24h), week (7d)",
     )
     p_focus.add_argument("--model", default="gemini-3-pro-preview", help="Gemini model (default: gemini-3-pro-preview)")
     p_focus.add_argument("--dry-run", action="store_true", help="Show what would be sent without calling Gemini")
+    p_focus.add_argument("--budget", type=int, default=120000, help="Character budget per synthesis call (default: 120000, 0=unlimited)")
+
+    # search
+    p_search = subparsers.add_parser("search", help="Full-text search over events")
+    p_search.add_argument("query", nargs="+", help="Search terms")
+    p_search.add_argument("--and", dest="and_terms", action="append", default=[], metavar="TERM", help="Require additional term (repeatable)")
+    p_search.add_argument("--or", dest="or_terms", action="append", default=[], metavar="TERM", help="Include alternative term (repeatable)")
+    p_search.add_argument("--not", dest="not_terms", action="append", default=[], metavar="TERM", help="Exclude term (repeatable)")
+    p_search.add_argument("-t", "--type", dest="event_type", help="Filter by event type")
+    p_search.add_argument("-v", "--verbose", action="store_true", help="Show full event content")
+    p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
+    p_search.add_argument("--fzf", action="store_true", help="Open results in fzf with chat preview")
+    p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index first")
+    p_search.add_argument("--cwd", help="Scope search to this directory (default: current directory)")
+    p_search.add_argument("--all", action="store_true", help="Search all projects, not just current directory")
 
     # log
-    subparsers.add_parser("log", help="Tail the capture log")
+    log_parser = subparsers.add_parser("log", help="Tail the event log (pretty JSONL)")
+    log_parser.add_argument("-n", "--lines", type=int, default=20, help="Initial lines to show (default: 20)")
 
     # path
     subparsers.add_parser("path", help="Show database and log paths")
@@ -117,6 +147,11 @@ def main() -> int:
     sp_ui.add_argument("--no-open", dest="open", action="store_false", help="Don't open browser")
     sp_ui.add_argument("--reload", action="store_true", help="Enable auto-reload (dev mode)")
 
+    # plans
+    sp_plans = subparsers.add_parser("plans", help="Manage plan file capture")
+    plans_subs = sp_plans.add_subparsers(dest="plans_command")
+    plans_subs.add_parser("sync", help="Discover and ingest ~/.claude/plans/*.md")
+
     # transcripts
     sp_transcripts = subparsers.add_parser("transcripts", help="Archive session transcripts")
     transcripts_subs = sp_transcripts.add_subparsers(dest="transcripts_command")
@@ -126,6 +161,7 @@ def main() -> int:
     sp_tr_list = transcripts_subs.add_parser("list", help="List archived transcripts")
     sp_tr_list.add_argument("--limit", "-n", type=int, default=20, help="Number to show")
     sp_tr_list.add_argument("--subagents", action="store_true", help="Include subagent transcripts")
+    sp_tr_list.add_argument("--fzf", action="store_true", help="Interactive select with fzf, enter opens show")
 
     transcripts_subs.add_parser("stats", help="Show archive statistics")
 
@@ -141,6 +177,10 @@ def main() -> int:
     sp_tr_extract.add_argument("--since", type=int, help="Hours to look back (default: 24)")
     sp_tr_extract.add_argument("--force", action="store_true", help="Reprocess from beginning")
     sp_tr_extract.add_argument("--dry-run", action="store_true", help="Show what would be processed")
+
+    # session-summary (used by fzf preview)
+    sp_ss = subparsers.add_parser("session-summary", help="Gemini summary of a session")
+    sp_ss.add_argument("session_id", help="Session ID (prefix match)")
 
     args = parser.parse_args()
 
@@ -161,7 +201,21 @@ def main() -> int:
         "learnings": cmd_learnings,
         "focus": cmd_focus,
         "transcripts": cmd_transcripts,
+        "session-summary": cmd_session_summary,
     }
+
+    if args.command == "search":
+        return cmd_search(args)
+
+    if args.command == "chat":
+        return cmd_chat(args)
+
+    # Subcommand routing for nested commands
+    if args.command == "plans":
+        if args.plans_command == "sync":
+            return cmd_plans_sync(args)
+        sp_plans.print_help()
+        return 0
 
     handler = commands.get(args.command)
     if handler:
