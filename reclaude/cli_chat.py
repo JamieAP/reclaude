@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from .cli_utils import _session_filter
 from .db import CaptureDB, SemanticEvent
 
 DIM = "\033[2m"
@@ -163,19 +164,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
         events = db.query_events(event_type=CHAT_TYPES, limit=50_000)
         events.reverse()  # chronological
     elif session_arg:
-        # Resolve session by prefix match
-        all_sids = db.get_session_ids()
-        matches = [s for s in all_sids if s.startswith(session_arg)]
-        if not matches:
-            print(f"No session matching: {session_arg}", file=sys.stderr)
-            return 1
-        if len(matches) > 1:
-            print(f"Ambiguous prefix '{session_arg}', matches: {len(matches)}", file=sys.stderr)
-            for m in matches[:5]:
-                print(f"  {m}", file=sys.stderr)
+        session_id = _session_filter(db, session_arg)
+        if not session_id:
             return 1
         events = db.query_events(
-            session_id=matches[0],
+            session_id=session_id,
             event_type=CHAT_TYPES,
             limit=50_000,
         )
