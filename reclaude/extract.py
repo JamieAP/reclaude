@@ -414,7 +414,7 @@ class TranscriptExtractor:
                     },
                 }
 
-            # THINKING-only (no text in this entry)
+            # Thinking without text (thinking-only or thinking + tool_use)
             elif thinking_text:
                 return {
                     "event_type": SemanticEventType.THINKING,
@@ -424,6 +424,7 @@ class TranscriptExtractor:
                     "metadata": {
                         **base_metadata,
                         "msg_id": msg_id,
+                        "has_tool_use": "tool_use" in block_types,
                     },
                 }
 
