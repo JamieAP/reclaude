@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -56,15 +57,15 @@ def _parse_since(value: str) -> datetime:
 
 def _resolve_session(db: CaptureDB, value: str | None) -> str | None:
     """Resolve a session id/prefix, or choose the latest session when value is None."""
-    sessions = db.get_sessions_with_info()
-    if not sessions:
+    session_ids = db.get_session_ids()
+    if not session_ids:
         return None
 
     if value is None or value.strip().lower() in {"latest", "@latest"}:
-        return sessions[0][0]
+        return session_ids[0]
 
     needle = value.strip()
-    matches = [sid for sid, _, _, _ in sessions if sid == needle or sid.startswith(needle)]
+    matches = [sid for sid in session_ids if sid == needle or sid.startswith(needle)]
     if len(matches) == 1:
         return matches[0]
 
@@ -98,3 +99,34 @@ def _event_to_dict(event, full: bool = False) -> dict:
         "content": content,
         "metadata": event.metadata,
     }
+
+
+# ── Shared argument helpers ──────────────────────────────────────────
+
+
+def add_json_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+
+def add_full_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--full", action="store_true", help="Show full content")
+
+
+def add_session_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--session", "-s", help="Filter by session ID (prefix match)")
+
+
+def add_all_flag(parser: argparse.ArgumentParser, *, help: str = "Include all directories, not just current") -> None:
+    parser.add_argument("--all", action="store_true", help=help)
+
+
+def add_fzf_flag(parser: argparse.ArgumentParser, *, help: str = "Interactive select with fzf") -> None:
+    parser.add_argument("--fzf", action="store_true", help=help)
+
+
+def add_limit_flag(parser: argparse.ArgumentParser, default: int = 20) -> None:
+    parser.add_argument("--limit", "-n", type=int, default=default, help=f"Max results (default: {default})")
+
+
+def add_limit_positional(parser: argparse.ArgumentParser, default: int = 20) -> None:
+    parser.add_argument("limit", type=int, nargs="?", default=default, help=f"Number of results (default: {default})")

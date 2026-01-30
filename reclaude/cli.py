@@ -33,6 +33,10 @@ from .cli_files import cmd_files
 from .cli_server import cmd_log, cmd_path, cmd_ui
 from .cli_status import cmd_session_summary, cmd_sessions, cmd_status
 from .cli_transcripts import cmd_transcripts
+from .cli_utils import (
+    add_json_flag, add_full_flag, add_session_flag,
+    add_all_flag, add_fzf_flag, add_limit_flag, add_limit_positional,
+)
 
 
 def main() -> int:
@@ -48,37 +52,39 @@ def main() -> int:
 
     # sessions
     sp_sessions = subparsers.add_parser("sessions", help="List recent sessions")
-    sp_sessions.add_argument("limit", type=int, nargs="?", default=10, help="Number of sessions")
-    sp_sessions.add_argument("--all", action="store_true", help="Show sessions from all directories (default: cwd only)")
-    sp_sessions.add_argument("--json", action="store_true", help="Output as JSON")
-    sp_sessions.add_argument("--fzf", action="store_true", help="Interactive select with fzf, outputs cd+cb command")
+    add_limit_positional(sp_sessions, default=10)
+    add_all_flag(sp_sessions, help="Show sessions from all directories (default: cwd only)")
+    add_json_flag(sp_sessions)
+    add_fzf_flag(sp_sessions, help="Interactive select with fzf, outputs cd+cb command")
     sp_sessions.add_argument("--heal", action="store_true", help="Emit synthetic session_end for crashed sessions")
 
     # events
     sp_events = subparsers.add_parser("events", help="Show recent events")
     sp_events.add_argument("limit", type=int, nargs="?", default=None, help="Number of events (default varies by type)")
-    sp_events.add_argument("--session", "-s", help="Filter by session ID (prefix match)")
+    add_session_flag(sp_events)
     sp_events.add_argument("--type", "-t", metavar="TYPES", help="Filter by event type(s): prompt,diff,plan,tool,compaction")
-    sp_events.add_argument("--json", action="store_true", help="Output as JSON")
-    sp_events.add_argument("--full", action="store_true", help="Show full content")
+    add_json_flag(sp_events)
+    add_full_flag(sp_events)
     sp_events.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
-    sp_events.add_argument("--all", action="store_true", help="Search all repos (not just current)")
+    add_all_flag(sp_events, help="Search all repos (not just current)")
     sp_events.add_argument("--compact", action="store_true", help="Compact output for preview panes")
     sp_events.add_argument("--id", type=int, help="Show a single event by ID")
 
     # chat - view conversation around an event
     p_chat = subparsers.add_parser("chat", help="View conversation around an event")
-    p_chat.add_argument("event_id", type=int, help="Event ID to navigate to")
+    p_chat.add_argument("event_id", type=int, nargs="?", help="Event ID to navigate to")
+    add_session_flag(p_chat)
     p_chat.add_argument("--no-pager", action="store_true", help="Print to stdout instead of less")
+    add_all_flag(p_chat, help="Show all sessions across all repos")
 
     # files - files touched by Claude
     sp_files = subparsers.add_parser("files", help="Find files touched by Claude")
     sp_files.add_argument("pattern", nargs="?", help="Filter by file path substring")
-    sp_files.add_argument("--session", "-s", help="Filter by session ID (prefix match)")
-    sp_files.add_argument("--limit", "-n", type=int, default=50, help="Max files to show (default 50)")
+    add_session_flag(sp_files)
+    add_limit_flag(sp_files, default=50)
     sp_files.add_argument("--scan-limit", type=int, default=5000, help="Max events to scan (default 5000)")
-    sp_files.add_argument("--json", action="store_true", help="Output as JSON")
-    sp_files.add_argument("--full", action="store_true", help="Show detailed info per file")
+    add_json_flag(sp_files)
+    add_full_flag(sp_files)
     sp_files.add_argument("--stream", action="store_true", help="Stream paths live, poll for new (Ctrl+C to stop)")
 
     # context
@@ -98,11 +104,11 @@ def main() -> int:
 
     # learnings
     sp_learnings = subparsers.add_parser("learnings", help="List stored learnings")
-    sp_learnings.add_argument("limit", type=int, nargs="?", default=10, help="Number of learnings")
-    sp_learnings.add_argument("--json", action="store_true", help="Output as JSON")
-    sp_learnings.add_argument("--full", action="store_true", help="Show full content")
+    add_limit_positional(sp_learnings, default=10)
+    add_json_flag(sp_learnings)
+    add_full_flag(sp_learnings)
     sp_learnings.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
-    sp_learnings.add_argument("--all", action="store_true", help="Search all repos (not just current)")
+    add_all_flag(sp_learnings, help="Search all repos (not just current)")
     sp_learnings.add_argument("--human", action="store_true", help="Human-readable semantic output")
     sp_learnings.add_argument("--extract", metavar="SESSION", help="Extract learnings from session")
     sp_learnings.add_argument("--commit", action="store_true", help="Save extracted learnings")
@@ -128,11 +134,11 @@ def main() -> int:
     p_search.add_argument("--not", dest="not_terms", action="append", default=[], metavar="TERM", help="Exclude term (repeatable)")
     p_search.add_argument("-t", "--type", dest="event_type", help="Filter by event type")
     p_search.add_argument("-v", "--verbose", action="store_true", help="Show full event content")
-    p_search.add_argument("-n", "--limit", type=int, default=20, help="Max results (default: 20)")
-    p_search.add_argument("--fzf", action="store_true", help="Open results in fzf with chat preview")
+    add_limit_flag(p_search, default=20)
+    add_fzf_flag(p_search, help="Open results in fzf with chat preview")
     p_search.add_argument("--rebuild", action="store_true", help="Rebuild FTS index first")
     p_search.add_argument("--cwd", help="Scope search to this directory (default: current directory)")
-    p_search.add_argument("--all", action="store_true", help="Search all projects, not just current directory")
+    add_all_flag(p_search, help="Search all projects, not just current directory")
 
     # log
     log_parser = subparsers.add_parser("log", help="Tail the event log (pretty JSONL)")
@@ -160,9 +166,9 @@ def main() -> int:
     transcripts_subs.add_parser("sync", help="Scan and archive all transcripts")
 
     sp_tr_list = transcripts_subs.add_parser("list", help="List archived transcripts")
-    sp_tr_list.add_argument("--limit", "-n", type=int, default=20, help="Number to show")
+    add_limit_flag(sp_tr_list, default=20)
     sp_tr_list.add_argument("--subagents", action="store_true", help="Include subagent transcripts")
-    sp_tr_list.add_argument("--fzf", action="store_true", help="Interactive select with fzf, enter opens show")
+    add_fzf_flag(sp_tr_list, help="Interactive select with fzf, enter opens show")
 
     transcripts_subs.add_parser("stats", help="Show archive statistics")
 
