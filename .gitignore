@@ -35,5 +35,3 @@ htmlcov/
 .claude/
 .ruff_cache/
 
-# Git worktrees
-.worktrees/

@@ -118,6 +118,8 @@ class SessionInfo(BaseModel):
     last_event_at: datetime
     event_count: int
     cwd: str | None
+    start_cwd: str | None = None  # Directory session started in (for resuming)
+    is_active: bool = False  # Whether session is currently active
     # Extended stats
     repos: list[str] = []
     branches: list[str] = []

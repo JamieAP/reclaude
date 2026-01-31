@@ -14,10 +14,57 @@ def cmd_log(args: argparse.Namespace) -> int:
         print(f"Log file not found: {LOG_FILE}")
         return 1
 
+    import json
+    import sys
+
+    LEVEL_COLORS = {
+        "debug": "\033[2m",      # dim
+        "info": "\033[36m",      # cyan
+        "warning": "\033[33m",   # yellow
+        "error": "\033[31m",     # red
+    }
+    RESET = "\033[0m"
+    DIM = "\033[2m"
+
+    def fmt_line(raw: str) -> str:
+        try:
+            d = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw.rstrip()
+
+        ts = d.pop("timestamp", "")[:19]  # trim to seconds
+        level = d.pop("level", "info")
+        event = d.pop("event", "?")
+        session = d.pop("session", "")
+
+        color = LEVEL_COLORS.get(level, "")
+        parts = [f"{DIM}{ts}{RESET}"]
+        if session:
+            parts.append(f"\033[35m{session}{RESET}")
+        parts.append(f"{color}{level.upper():7s} {event}{RESET}")
+
+        # remaining keys as key=val
+        extras = " ".join(f"{k}={v}" for k, v in d.items())
+        if extras:
+            parts.append(f"{DIM}{extras}{RESET}")
+
+        return " ".join(parts)
+
+    tail_args = [str(getattr(args, "lines", 20))]
     try:
-        subprocess.run(["tail", "-f", str(LOG_FILE)])
+        proc = subprocess.Popen(
+            ["tail", "-n", tail_args[0], "-f", str(LOG_FILE)],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        for line in proc.stdout:
+            sys.stdout.write(fmt_line(line) + "\n")
+            sys.stdout.flush()
     except KeyboardInterrupt:
         pass
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
 
     return 0
 

@@ -4,7 +4,14 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../../api';
 import { formatDate } from '../../utils/formatUtils';
 
-const TIME_SCALES = ['minute', 'hour', 'day', 'week'] as const;
+const TIME_SCALES = ['15min', 'hour', '8hour', 'day', 'week'] as const;
+const SCALE_LABELS: Record<string, string> = {
+  '15min': '15 min',
+  'hour': 'Hour',
+  '8hour': '8 Hour',
+  'day': 'Day',
+  'week': 'Week',
+};
 
 export function FocusPage() {
   const [selectedScale, setSelectedScale] = useState<string | null>(null);
@@ -79,13 +86,13 @@ export function FocusPage() {
             <button
               key={scale}
               onClick={() => setSelectedScale(scale)}
-              className="px-3 py-1 rounded text-xs transition-colors capitalize"
+              className="px-3 py-1 rounded text-xs transition-colors"
               style={{
                 backgroundColor: selectedScale === scale ? 'var(--ctp-teal)' : 'var(--ctp-surface1)',
                 color: selectedScale === scale ? 'var(--ctp-crust)' : 'var(--ctp-text)',
               }}
             >
-              {scale} {scaleCounts[scale] ? `(${scaleCounts[scale]})` : ''}
+              {SCALE_LABELS[scale] ?? scale} {scaleCounts[scale] ? `(${scaleCounts[scale]})` : ''}
             </button>
           ))}
         </div>

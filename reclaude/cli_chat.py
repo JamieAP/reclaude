@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from .cli_context import _find_latest_session_for_cwd
 from .cli_utils import _relative_time, _session_filter
 from .db import CaptureDB, SemanticEvent
 
@@ -238,8 +239,12 @@ def cmd_chat(args: argparse.Namespace) -> int:
     event_id = args.event_id
 
     if not show_all and not event_id and not session_arg:
-        print("Provide an event_id, --session, or --all", file=sys.stderr)
-        return 1
+        # Default to latest session for cwd
+        cwd_session = _find_latest_session_for_cwd(db, os.getcwd())
+        if not cwd_session:
+            print("No session found for current directory", file=sys.stderr)
+            return 1
+        session_arg = cwd_session
 
     CHAT_TYPES = ["user_prompt", "assistant", "plan"]
 

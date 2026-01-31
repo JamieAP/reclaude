@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .db import SemanticEventType
 
-LOG_FILE = Path.home() / ".reclaude" / "capture.log"
+LOG_FILE = Path.home() / ".reclaude" / "reclaude.jsonl"
 
 SID_NONE = "--------"
 
@@ -65,6 +65,20 @@ EVENT_TYPE_CONFIG: dict[str, EventTypeConfig] = {
 
 
 FOCUS_PROMPTS = {
+    "15min": """Summarize the developer's work in the LAST 15 MINUTES.
+
+The input is organized into sections:
+- SESSION SUMMARIES: Pre-synthesized summaries of completed work (high signal)
+- PLANS: Implementation plans being followed (goals/context)
+- CODE CHANGES: Files modified with diffs and structural trees
+- CLAUDE'S RESPONSES: What Claude accomplished (outcomes)
+- TOOL USE: Commands and tools executed
+- RAW ACTIVITY: Prompts, plans, and thinking (fill gaps)
+
+What exactly happened in this short window? Be precise and granular - every action matters at this timescale.
+
+Be specific and concise (2-4 bullets). Include file names, function names, commands, error messages where relevant.""",
+
     "hour": """Summarize the developer's work in the LAST HOUR.
 
 The input is organized into sections:

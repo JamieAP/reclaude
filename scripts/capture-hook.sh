@@ -12,12 +12,12 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Prefer uv (auto-installs deps), fall back to direct venv python
-if command -v uv &>/dev/null; then
-    exec uv run --project "$PLUGIN_ROOT" python -m reclaude.capture "$HOOK_TYPE"
-elif [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
+# Fast path: use venv directly if it exists (avoids uv lockfile resolution)
+if [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
     exec "$PLUGIN_ROOT/.venv/bin/python" -m reclaude.capture "$HOOK_TYPE"
+elif command -v uv &>/dev/null; then
+    # Cold start: uv will create venv + install deps
+    exec uv run --project "$PLUGIN_ROOT" python -m reclaude.capture "$HOOK_TYPE"
 else
-    # Silent exit - don't break Claude if not set up
     exit 0
 fi

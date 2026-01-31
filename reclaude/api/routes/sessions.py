@@ -17,7 +17,7 @@ def list_sessions(
     """List all sessions with metadata and extended stats."""
     sessions = db.get_sessions_with_info()
     result = []
-    for session_id, last_ts, count, cwd in sessions:
+    for session_id, last_ts, count, cwd, start_cwd, is_active in sessions:
         stats = db.get_session_extended_stats(session_id)
         result.append(
             SessionInfo(
@@ -25,6 +25,8 @@ def list_sessions(
                 last_event_at=last_ts,
                 event_count=count,
                 cwd=cwd,
+                start_cwd=start_cwd,
+                is_active=is_active,
                 repos=stats["repos"],
                 branches=stats["branches"],
                 lines_added=stats["lines_added"],

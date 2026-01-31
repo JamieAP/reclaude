@@ -66,6 +66,7 @@ def main() -> int:
     add_json_flag(sp_events)
     add_full_flag(sp_events)
     sp_events.add_argument("--semantic", metavar="QUERY", help="Semantic search query")
+    sp_events.add_argument("--cwd", help="Scope to this directory (default: current directory)")
     add_all_flag(sp_events, help="Search all repos (not just current)")
     sp_events.add_argument("--compact", action="store_true", help="Compact output for preview panes")
     add_fzf_flag(sp_events, help="Interactive event browser with fzf")

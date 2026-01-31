@@ -346,6 +346,9 @@ def cmd_events(args: argparse.Namespace) -> int:
 
     session_id = _session_filter(db, args.session)
 
+    # CWD scoping: filter to current directory unless --all
+    cwd = None if args.all else (args.cwd or os.getcwd())
+
     # Parse --type argument
     type_arg = args.type
     requested_types: list[str] = []
@@ -401,6 +404,7 @@ def cmd_events(args: argparse.Namespace) -> int:
             event_type=config.db_type,
             limit=limit,
             session_id=session_id,
+            cwd=cwd,
         )
     elif requested_types:
         # Multiple types: query all, filter post-query
@@ -410,7 +414,7 @@ def cmd_events(args: argparse.Namespace) -> int:
             for dt in db_types
         }
         # Query more than needed since we'll filter
-        events = db.query_events(limit=limit * 3, session_id=session_id)
+        events = db.query_events(limit=limit * 3, session_id=session_id, cwd=cwd)
         events = [
             e
             for e in events
@@ -419,7 +423,7 @@ def cmd_events(args: argparse.Namespace) -> int:
         ][:limit]
     else:
         # No type filter: all events
-        events = db.query_events(limit=limit, session_id=session_id)
+        events = db.query_events(limit=limit, session_id=session_id, cwd=cwd)
 
     get_logger().info(
         "query_events",
@@ -548,7 +552,7 @@ def _cmd_events_semantic(
     remote_url = None
     context_label = ""
     if not args.all:
-        ctx = get_git_context(os.getcwd())
+        ctx = get_git_context(args.cwd or os.getcwd())
         remote_url = ctx.get("remote_url")
         if remote_url:
             repo_name = remote_url.rstrip("/").split("/")[-1].replace(".git", "")
