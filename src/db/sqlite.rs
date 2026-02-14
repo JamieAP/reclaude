@@ -19,7 +19,10 @@ impl MetadataDb {
 
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             PRAGMA synchronous = normal;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA cache_size = -16000;",
         )?;
 
         let db = Self { conn };

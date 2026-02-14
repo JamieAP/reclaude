@@ -1,4 +1,4 @@
-// API types matching Python Pydantic models
+// API response types
 
 export interface SemanticEvent {
   id: number;

@@ -17,6 +17,14 @@ pub struct EventStore {
     conn: Mutex<Connection>,
 }
 
+impl Drop for EventStore {
+    fn drop(&mut self) {
+        if let Ok(conn) = self.conn.lock() {
+            let _ = conn.execute_batch("PRAGMA optimize");
+        }
+    }
+}
+
 /// Register sqlite-vec extension globally (once per process).
 fn init_sqlite_vec() {
     use std::sync::Once;
@@ -365,13 +373,35 @@ impl EventStore {
         Ok(events)
     }
 
-    /// Update the vector embedding for a specific event.
+    /// Update the vector embedding for a specific event (used in tests and single-event paths).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn update_vector(&self, event_id: i64, vector: &[f32]) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE events SET vector = ?1 WHERE id = ?2",
             rusqlite::params![vector.as_bytes(), event_id],
         )?;
+        Ok(())
+    }
+
+    /// Batch-update vector embeddings within a single transaction.
+    pub async fn update_vectors_batch(&self, updates: &[(i64, Vec<f32>)]) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("BEGIN")?;
+        let result = (|| -> anyhow::Result<()> {
+            let mut stmt = conn.prepare_cached(
+                "UPDATE events SET vector = ?1 WHERE id = ?2",
+            )?;
+            for (id, vector) in updates {
+                stmt.execute(rusqlite::params![vector.as_bytes(), id])?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+            return result;
+        }
+        conn.execute_batch("COMMIT")?;
         Ok(())
     }
 
@@ -411,17 +441,15 @@ fn create_schema(conn: &Connection) -> anyhow::Result<()> {
             vector BLOB
         );
 
-        CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+        CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(event_type, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
-        CREATE INDEX IF NOT EXISTS idx_events_cwd ON events(cwd);
-        CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_cwd_ts ON events(cwd, timestamp DESC);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
             content,
             content='events',
             content_rowid='id',
-            tokenize='porter unicode61',
-            prefix='2 3'
+            tokenize='porter unicode61'
         );
 
         CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN

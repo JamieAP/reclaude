@@ -1,39 +1,41 @@
 # reclaude
 
-Semantic event capture and learnings system for Claude Code sessions.
+Semantic event capture and analysis for Claude Code sessions.
 
 ## Features
 
 - **Event Capture** - Prompts, responses, tool usage, file diffs, session lifecycle
-- **Learnings** - Persistent cross-session memory for patterns and discoveries
 - **Transcript Extraction** - Batch extraction of summaries, plans, and thinking from session transcripts
+- **Full-Text Search** - FTS5-powered instant text search with boolean operators
+- **Semantic Search** - Vector similarity via local ONNX embeddings (nomic-embed-text-v1.5)
 - **Focus Synthesis** - Gemini-powered activity summaries at hour/day/week scales
-- **Web Dashboard** - Browse sessions, events, learnings with semantic search
-- **Semantic Search** - Vector similarity via Gemini embeddings
+- **Web Dashboard** - Browse sessions, events with search
+- **fzf Integration** - Interactive browsing for events, sessions, and search results
 
 ## Installation
 
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) (recommended) or Python 3.11+
+**Prerequisites:** Rust toolchain (cargo)
 
 ```bash
-# Add marketplace and install
+# Add marketplace and install plugin
 claude plugin marketplace add JamieAP/reclaude
 claude plugin install reclaude@reclaude
 ```
 
-Hooks auto-register and dependencies auto-install on first use via `uv run`.
+Hooks auto-register via `scripts/capture-hook.sh`.
 
 ### Install CLI
 
-To query captured data from your terminal, install the CLI:
+Build and install the binary:
 
 ```bash
-uv tool install git+https://github.com/JamieAP/reclaude
+cargo build --release
+cp target/release/reclaude ~/.local/bin/reclaude
 ```
 
 Or run `/reclaude:setup` in Claude Code for guided installation.
 
-Both the plugin hooks and CLI use the same database at `~/.reclaude/capture.db`.
+Data is stored in `~/.reclaude/metadata.db` (SQLite with FTS5 and sqlite-vec).
 
 ## CLI Reference
 
@@ -44,16 +46,16 @@ reclaude status              # Capture statistics
 reclaude sessions [N]        # List recent sessions
 reclaude events [N]          # Recent events (filterable)
 reclaude files [pattern]     # Files touched by Claude
-reclaude context             # LLM-ready session context
+reclaude chat                # View conversation around events
 ```
 
-### Learnings
+### Search
 
 ```bash
-reclaude learn "insight"     # Store a learning
-reclaude learnings [N]       # Query learnings (current project)
-reclaude learnings --all     # All projects
-reclaude learnings --semantic "query"  # Semantic search
+reclaude search "query"             # Full-text search
+reclaude search "fix" --and "bug"   # Boolean operators
+reclaude search --semantic "query"  # Vector similarity search
+reclaude search --fzf               # Interactive results
 ```
 
 ### Transcripts
@@ -62,8 +64,6 @@ reclaude learnings --semantic "query"  # Semantic search
 reclaude transcripts sync    # Archive all transcripts
 reclaude transcripts list    # List archived
 reclaude transcripts extract # Extract semantic events
-reclaude transcripts extract --file <path>  # Single file
-reclaude transcripts export <session-id>    # Export to JSONL
 ```
 
 ### Focus
@@ -74,68 +74,55 @@ reclaude focus day           # Last 24h summary
 reclaude focus week          # Last 7d summary
 ```
 
+### Embeddings
+
+```bash
+reclaude embed download      # Download ONNX model (~131MB)
+reclaude embed status        # Show model status
+reclaude embed backfill      # Vectorize historical events
+```
+
 ### Utilities
 
 ```bash
 reclaude ui                  # Launch web dashboard (localhost:8420)
-reclaude path                # Show database/log paths
 reclaude log                 # Tail capture log
+reclaude tag-session         # Tag current session
+reclaude get-session <tag>   # Retrieve session by tag
 ```
-
-## Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/reclaude:learn <content>` | Store a learning |
-| `/reclaude:learnings` | Query learnings for current project |
 
 ## Event Types
 
-| Type | Description |
-|------|-------------|
-| `user_prompt` | User prompts to Claude |
-| `assistant` | Claude's text responses |
-| `plan` | Planning text before tool use |
-| `thinking` | Claude's reasoning blocks |
-| `tool_use` | Tool invocations with I/O |
-| `file_diff` | Edit/Write as unified diffs |
-| `compaction` | Session summaries |
-| `session_start` | Session startup/resume |
-| `session_end` | Session completion |
-| `subagent_stop` | Subagent completion |
-| `plan_file` | Implementation plans from ~/.claude/plans/ |
-
-## Programmatic Access
-
-```python
-from reclaude.db import CaptureDB, SemanticEventType
-
-db = CaptureDB()
-
-# Query events
-events = db.query_events(
-    event_type=SemanticEventType.USER_PROMPT,
-    limit=10
-)
-
-# Get counts
-counts = db.event_counts_by_type()
-```
+| Type | Category | Description |
+|------|----------|-------------|
+| `user_prompt` | conversation | User prompts to Claude |
+| `assistant` | conversation | Claude's text responses |
+| `plan` | conversation | Planning text before tool use |
+| `thinking` | conversation | Claude's reasoning blocks |
+| `tool_use` | action | Tool invocations with I/O |
+| `file_diff` | action | Edit/Write as unified diffs |
+| `compaction` | system | Session summaries |
+| `session_start` | lifecycle | Session startup/resume |
+| `session_end` | lifecycle | Session completion |
+| `subagent_spawn` | lifecycle | Subagent creation |
+| `subagent_stop` | lifecycle | Subagent completion |
+| `plan_file` | system | Implementation plans from ~/.claude/plans/ |
 
 ## Data Locations
 
 | Path | Contents |
 |------|----------|
-| `~/.reclaude/capture.db` | SQLite database |
-| `~/.reclaude/capture.log` | Structured log |
-| `~/.reclaude/transcripts/` | Archived transcripts (zstd) |
+| `~/.reclaude/metadata.db` | SQLite database (events, sessions, FTS, vectors) |
+| `~/.reclaude/log/reclaude.jsonl` | Structured log |
+| `~/.reclaude/models/` | ONNX embedding model |
 
 ## Development
 
 ```bash
-uv sync              # Install dependencies
-uv run pytest        # Run tests
-uv run reclaude ui   # Start dev server
+cargo build --release        # Build release binary
+cargo test                   # Run tests
+just serve                   # API + Vite dev server
+just install                 # Build and install to ~/.local/bin
 ```
 
 ## License

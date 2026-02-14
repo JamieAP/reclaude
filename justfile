@@ -27,9 +27,9 @@ focus scale="hour":
 transcripts cmd="sync":
     reclaude transcripts {{cmd}}
 
-# Tail capture log
+# Tail log
 log:
-    tail -f ~/.reclaude/capture.log
+    tail -f ~/.reclaude/log/reclaude.jsonl
 
 # Build release binary
 build:

@@ -72,7 +72,7 @@ pub enum Commands {
     #[command(name = "get-session")]
     GetSession(GetSessionArgs),
 
-    /// Backfill events from Python capture.db
+    /// Backfill events from legacy capture.db
     Backfill(BackfillArgs),
 }
 
@@ -80,7 +80,7 @@ pub enum Commands {
 
 #[derive(clap::Args)]
 pub struct BackfillArgs {
-    /// Path to Python capture.db (default: ~/.reclaude/capture.db)
+    /// Path to legacy capture.db (default: ~/.reclaude/capture.db)
     #[arg(long)]
     pub from: Option<String>,
 

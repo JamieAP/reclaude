@@ -151,35 +151,50 @@ impl NomicEmbedder {
         dir.join(MODEL_FILE).exists() && dir.join(TOKENIZER_FILE).exists()
     }
 
-    /// Download model files using huggingface-cli. Returns the model directory.
-    pub fn download() -> Result<PathBuf> {
+    /// Download model files directly from HuggingFace. Returns the model directory.
+    pub async fn download() -> Result<PathBuf> {
         let model_dir = Self::model_dir();
         std::fs::create_dir_all(&model_dir)?;
 
         eprintln!("Downloading nomic-embed-text-v1.5 ONNX model...");
-        eprintln!("  Repo: {HF_REPO}");
         eprintln!("  Dest: {}", model_dir.display());
 
-        let status = std::process::Command::new("huggingface-cli")
-            .args([
-                "download", HF_REPO,
-                &format!("onnx/{MODEL_FILE}"), TOKENIZER_FILE,
-                "--local-dir", &model_dir.to_string_lossy(),
-            ])
-            .status()
-            .context("huggingface-cli not found. Install: pip install huggingface-hub")?;
+        let base_url = format!("https://huggingface.co/{HF_REPO}/resolve/main");
+        let files = [
+            (format!("{base_url}/onnx/{MODEL_FILE}"), MODEL_FILE),
+            (format!("{base_url}/{TOKENIZER_FILE}"), TOKENIZER_FILE),
+        ];
 
-        if !status.success() {
-            anyhow::bail!("huggingface-cli download failed (exit {})", status);
-        }
+        let client = reqwest::Client::new();
 
-        // huggingface-cli puts ONNX in onnx/ subdir, move to model_dir root
-        let nested = model_dir.join("onnx").join(MODEL_FILE);
-        let target = model_dir.join(MODEL_FILE);
-        if nested.exists() && !target.exists() {
-            std::fs::rename(&nested, &target)?;
-            // Clean up empty onnx dir
-            let _ = std::fs::remove_dir(model_dir.join("onnx"));
+        for (url, filename) in &files {
+            let dest = model_dir.join(filename);
+            if dest.exists() {
+                eprintln!("  {filename}: already exists, skipping");
+                continue;
+            }
+
+            eprint!("  {filename}: downloading...");
+            let response = client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("failed to fetch {url}"))?;
+
+            if !response.status().is_success() {
+                anyhow::bail!("HTTP {} fetching {url}", response.status());
+            }
+
+            let total = response.content_length();
+            let bytes = response.bytes().await?;
+
+            std::fs::write(&dest, &bytes)
+                .with_context(|| format!("failed to write {}", dest.display()))?;
+
+            match total {
+                Some(size) => eprintln!(" {:.1} MB", size as f64 / 1_048_576.0),
+                None => eprintln!(" {} bytes", bytes.len()),
+            }
         }
 
         eprintln!("Model downloaded successfully.");

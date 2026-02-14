@@ -8,7 +8,7 @@ use crate::cmd::{BOLD, CYAN, DIM, GREEN, RED, RESET};
 use crate::db::Database;
 use crate::models::Event;
 
-/// Default path to the Python capture.db.
+/// Default path to the legacy capture.db.
 fn default_capture_db() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     format!("{home}/.reclaude/capture.db")
@@ -42,10 +42,10 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
         anyhow::bail!("capture.db not found at: {capture_path}");
     }
 
-    eprintln!("{BOLD}Backfill from Python capture.db{RESET}");
+    eprintln!("{BOLD}Backfill from legacy capture.db{RESET}");
     eprintln!("  {DIM}Source:{RESET} {capture_path}");
 
-    // Open Python SQLite DB (read-only)
+    // Open legacy SQLite DB (read-only)
     let conn = Connection::open_with_flags(
         &capture_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -90,7 +90,7 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
     db.events.recreate_table().await?;
     eprintln!("{GREEN}done{RESET}");
 
-    // 2. Read all events from Python DB and insert in batches
+    // 2. Read all events from legacy DB and insert in batches
     let batch_size = 5000;
     let mut offset = 0usize;
     let mut inserted = 0usize;
