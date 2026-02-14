@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import signal
 import sys
@@ -66,10 +67,14 @@ def cmd_files(args: argparse.Namespace) -> int:
     if args.session:
         session_id = _session_filter(db, args.session)
 
+    # CWD scoping: filter to current directory unless --all
+    cwd = None if args.all else os.getcwd()
+
     # Query tool_use events
     events = db.query_events(
         event_type=SemanticEventType.TOOL_USE,
         session_id=session_id,
+        cwd=cwd,
         limit=args.scan_limit,
     )
 
@@ -112,6 +117,7 @@ def cmd_files(args: argparse.Namespace) -> int:
                 new_events = db.query_events_since_id(
                     since_id=last_id,
                     event_type=SemanticEventType.TOOL_USE,
+                    cwd=cwd,
                     limit=100,
                 )
 

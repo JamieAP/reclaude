@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from .db import CaptureDB
+from .cli_utils import _format_sid
 
 DIM = "\033[2m"
 RESET = "\033[0m"
@@ -233,6 +234,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     verbose = args.verbose
     use_fzf = args.fzf
+    full_sid = args.full_sid
 
     if use_fzf:
         return _fzf_mode(results)
@@ -251,7 +253,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     rows = []
     for e in results:
         ts = e.timestamp.strftime("%m-%d %H:%M")
-        sid = (e.session_id or "")[:8]
+        sid = _format_sid(e.session_id, full=full_sid)
         meta = json.loads(e.metadata) if isinstance(e.metadata, str) else (e.metadata or {})
         if not meta.get("tool") and meta.get("tool_name"):
             meta["tool"] = meta["tool_name"]
@@ -270,14 +272,15 @@ def cmd_search(args: argparse.Namespace) -> int:
     except OSError:
         tw = 120
     type_w = max(len(r[3]) for r in rows) if rows else 10
-    fixed = 10 + 2 + 8 + 2 + 2 + type_w + 3  # ts + gaps + sid + gaps + icon+space + type + sep
+    sid_w = max(len(r[1]) for r in rows) if rows else 8
+    fixed = 10 + 2 + sid_w + 2 + 2 + type_w + 3  # ts + gaps + sid + gaps + icon+space + type + sep
     content_w = max(tw - fixed - 4, 20)  # 4 for borders + padding
 
     # Header
     hdr_type = "TYPE".ljust(type_w)
     hdr_content = "CONTENT"
-    print(f"\n  {DIM}{'TIME':10s}  {'SESSION':8s}  {'  ' + hdr_type}   {hdr_content}{RESET}")
-    print(f"  {DIM}{'─' * 10}  {'─' * 8}  {'─' * (type_w + 2)}  {'─' * min(content_w, 50)}{RESET}")
+    print(f"\n  {DIM}{'TIME':10s}  {'SESSION':{sid_w}s}  {'  ' + hdr_type}   {hdr_content}{RESET}")
+    print(f"  {DIM}{'─' * 10}  {'─' * sid_w}  {'─' * (type_w + 2)}  {'─' * min(content_w, 50)}{RESET}")
 
     for ts, sid, icon, etype, cleaned, eid in rows:
         if verbose:
@@ -285,10 +288,10 @@ def cmd_search(args: argparse.Namespace) -> int:
         else:
             preview = cleaned[:content_w]
 
-        print(f"  {DIM}{ts:10s}{RESET}  {PURPLE}{sid:8s}{RESET}  {CYAN}{icon} {etype:{type_w}s}{RESET}   {preview}")
+        print(f"  {DIM}{ts:10s}{RESET}  {PURPLE}{sid:{sid_w}s}{RESET}  {CYAN}{icon} {etype:{type_w}s}{RESET}   {preview}")
 
         if verbose and "\n" in cleaned:
-            print(f"  {DIM}{'':10s}  {'':8s}  {'':>{type_w + 2}s}{RESET}   {DIM}id={eid}{RESET}")
+            print(f"  {DIM}{'':10s}  {'':{sid_w}s}  {'':>{type_w + 2}s}{RESET}   {DIM}id={eid}{RESET}")
 
     print(f"\n  {DIM}{'─' * min(tw - 4, 70)}")
     print(f"  {len(results)} result(s) for \"{query}\"{RESET}\n")

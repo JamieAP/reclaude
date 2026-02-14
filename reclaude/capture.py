@@ -73,6 +73,11 @@ def capture_user_prompt(payload: dict, db: CaptureDB) -> int | None:
         log.debug("prompt_skipped", session=sid_short, reason="too_short")
         return None
 
+    # Skip task/system XML injected as user prompts
+    if prompt.lstrip().startswith("<task-notification"):
+        log.debug("prompt_skipped", session=sid_short, reason="task_xml")
+        return None
+
     content = prompt[:MAX_PROMPT_LENGTH]
 
     # Get git context for worktree-aware storage

@@ -36,6 +36,7 @@ from .cli_transcripts import cmd_transcripts
 from .cli_utils import (
     add_json_flag, add_full_flag, add_session_flag,
     add_all_flag, add_fzf_flag, add_limit_flag, add_limit_positional,
+    add_full_sid_flag,
 )
 
 
@@ -56,6 +57,7 @@ def main() -> int:
     add_all_flag(sp_sessions, help="Show sessions from all directories (default: cwd only)")
     add_json_flag(sp_sessions)
     add_fzf_flag(sp_sessions, help="Interactive select with fzf, outputs cd+cb command")
+    add_full_sid_flag(sp_sessions)
     sp_sessions.add_argument("--heal", action="store_true", help="Emit synthetic session_end for crashed sessions")
 
     # events
@@ -70,15 +72,17 @@ def main() -> int:
     add_all_flag(sp_events, help="Search all repos (not just current)")
     sp_events.add_argument("--compact", action="store_true", help="Compact output for preview panes")
     add_fzf_flag(sp_events, help="Interactive event browser with fzf")
-    sp_events.add_argument("--id", type=int, help="Show a single event by ID")
+    sp_events.add_argument("--id", help="Show a single event by ID")
 
     # chat - view conversation around an event
     p_chat = subparsers.add_parser("chat", help="View conversation around an event")
     p_chat.add_argument("event_id", type=int, nargs="?", help="Event ID to navigate to")
     add_session_flag(p_chat)
+    add_limit_flag(p_chat, default=0)
     p_chat.add_argument("--no-pager", action="store_true", help="Print to stdout instead of less")
     add_all_flag(p_chat, help="Show all sessions across all repos")
     add_fzf_flag(p_chat, help="Pick session interactively with fzf")
+    add_full_sid_flag(p_chat)
 
     # files - files touched by Claude
     sp_files = subparsers.add_parser("files", help="Find files touched by Claude")
@@ -88,6 +92,7 @@ def main() -> int:
     sp_files.add_argument("--scan-limit", type=int, default=5000, help="Max events to scan (default 5000)")
     add_json_flag(sp_files)
     add_full_flag(sp_files)
+    add_all_flag(sp_files, help="Show files from all directories (default: cwd only)")
     sp_files.add_argument("--stream", action="store_true", help="Stream paths live, poll for new (Ctrl+C to stop)")
 
     # context
@@ -145,6 +150,7 @@ def main() -> int:
     add_all_flag(p_search, help="Search all projects, not just current directory")
     add_session_flag(p_search)
     add_json_flag(p_search)
+    add_full_sid_flag(p_search)
 
     # log
     log_parser = subparsers.add_parser("log", help="Tail the event log (pretty JSONL)")
@@ -195,6 +201,14 @@ def main() -> int:
     sp_ss = subparsers.add_parser("session-summary", help="Gemini summary of a session")
     sp_ss.add_argument("session_id", help="Session ID (prefix match)")
 
+    # tag-session - create a tag for the current session context
+    sp_tag = subparsers.add_parser("tag-session", help="Tag current session for later retrieval")
+
+    # get-session - retrieve session ID by tag
+    sp_get = subparsers.add_parser("get-session", help="Get session ID by tag")
+    sp_get.add_argument("tag", help="Tag to look up")
+    sp_get.add_argument("--quiet", "-q", action="store_true", help="Exit silently if not found")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -222,6 +236,26 @@ def main() -> int:
 
     if args.command == "chat":
         return cmd_chat(args)
+
+    if args.command == "tag-session":
+        from .db import CaptureDB
+        import os
+
+        db = CaptureDB()
+        tag = db.tag_session(cwd=os.getcwd())
+        print(tag)
+        return 0
+
+    if args.command == "get-session":
+        from .db import CaptureDB
+        db = CaptureDB()
+        session_id = db.get_session_by_tag(args.tag)
+        if session_id:
+            print(session_id)
+            return 0
+        if not args.quiet:
+            print(f"No session tagged '{args.tag}'", file=sys.stderr)
+        return 1
 
     # Subcommand routing for nested commands
     if args.command == "plans":

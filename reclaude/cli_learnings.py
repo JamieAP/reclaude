@@ -318,8 +318,15 @@ def cmd_learnings(args: argparse.Namespace) -> int:
         if not session_id:
             return 1
 
+    # CWD scoping: filter by remote_url unless --all
+    remote_url = None
+    if not args.all:
+        from reclaude.git import get_git_context
+        ctx = get_git_context(os.getcwd())
+        remote_url = ctx.get("remote_url")
+
     # Regular listing
-    learnings = db.query_learnings(limit=args.limit, session_id=session_id)
+    learnings = db.query_learnings(limit=args.limit, session_id=session_id, remote_url=remote_url)
 
     if not learnings:
         print("No learnings found")

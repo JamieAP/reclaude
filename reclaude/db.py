@@ -417,6 +417,20 @@ class CaptureDB:
                 )
             """)
 
+            # Session tags - allows agents to tag their session for later retrieval
+            # session_id is resolved lazily at get-time by matching cwd + timestamp
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_tags (
+                    tag TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    cwd TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_tags_session ON session_tags(session_id)"
+            )
+
             conn.commit()
 
     @contextmanager
@@ -535,12 +549,15 @@ class CaptureDB:
         session_id: str | None = None,
     ) -> list[SemanticEvent]:
         """Full-text search over event content via FTS5."""
+        # Escape query for FTS5: wrap in quotes to treat as literal phrase,
+        # doubling any internal quotes to escape them
+        escaped_query = '"' + query.replace('"', '""') + '"'
         sql = """
             SELECT e.* FROM events_fts f
             JOIN semantic_events e ON e.id = f.rowid
             WHERE events_fts MATCH ?
         """
-        params: list = [query]
+        params: list = [escaped_query]
         if event_type:
             if isinstance(event_type, list):
                 placeholders = ",".join("?" * len(event_type))
@@ -560,7 +577,7 @@ class CaptureDB:
             else:
                 sql += " AND json_extract(e.metadata, '$.cwd') = ?"
                 params.append(cwd)
-        sql += " ORDER BY f.rank LIMIT ?"
+        sql += " ORDER BY e.timestamp DESC LIMIT ?"
         params.append(limit)
 
         with self.connection() as conn:
@@ -752,23 +769,67 @@ class CaptureDB:
 
     def get_sessions_with_info(
         self,
+        cwd: str | None = None,
+        cwd_prefix: bool = True,
+        limit: int | None = None,
     ) -> list[tuple[str, datetime, int, str | None, str | None, bool]]:
         """Get sessions with last event timestamp, event count, cwd, start_cwd, and active status.
+
+        Args:
+            cwd: Filter sessions by start_cwd (where session was initiated).
+                 If None, returns all sessions.
+            cwd_prefix: If True, match cwd and subdirectories. If False, exact match only.
+            limit: Maximum number of sessions to return. If None, returns all.
 
         Returns:
             List of tuples: (session_id, last_ts, event_count, cwd, start_cwd, is_active)
         """
-        with self.connection() as conn:
-            rows = conn.execute("""
+        # Build query with CTE to compute start_cwd and filter at DB level
+        query = """
+            WITH session_with_start_cwd AS (
                 SELECT
-                    session_id,
-                    MAX(timestamp) as last_ts,
-                    COUNT(*) as cnt
-                FROM semantic_events
-                WHERE session_id IS NOT NULL AND session_id != ''
-                GROUP BY session_id
-                ORDER BY last_ts DESC
-            """).fetchall()
+                    s.session_id,
+                    s.last_ts,
+                    s.cnt,
+                    (
+                        SELECT json_extract(metadata, '$.cwd')
+                        FROM semantic_events
+                        WHERE session_id = s.session_id
+                          AND metadata LIKE '%"cwd"%'
+                        ORDER BY timestamp ASC
+                        LIMIT 1
+                    ) as start_cwd
+                FROM (
+                    SELECT
+                        session_id,
+                        MAX(timestamp) as last_ts,
+                        COUNT(*) as cnt
+                    FROM semantic_events
+                    WHERE session_id IS NOT NULL AND session_id != ''
+                    GROUP BY session_id
+                ) s
+            )
+            SELECT * FROM session_with_start_cwd
+        """
+        params: list = []
+
+        if cwd:
+            if cwd_prefix:
+                query += " WHERE (start_cwd = ? OR start_cwd LIKE ?)"
+                params.append(cwd)
+                params.append(cwd + "/%")
+            else:
+                query += " WHERE start_cwd = ?"
+                params.append(cwd)
+
+        query += " ORDER BY last_ts DESC"
+
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
 
         result = []
         for row in rows:
@@ -777,10 +838,10 @@ class CaptureDB:
             except (ValueError, AttributeError):
                 ts = datetime.now(timezone.utc)
             session_id = row["session_id"]
-            cwd = self._get_session_cwd(session_id)
-            start_cwd = self._get_session_start_cwd(session_id)
+            start_cwd = row["start_cwd"]
+            current_cwd = self._get_session_cwd(session_id)
             is_active = self._is_session_active(session_id, ts)
-            result.append((session_id, ts, row["cnt"], cwd, start_cwd, is_active))
+            result.append((session_id, ts, row["cnt"], current_cwd, start_cwd, is_active))
         return result
 
     def _get_session_cwd(self, session_id: str) -> str | None:
@@ -1804,3 +1865,125 @@ class CaptureDB:
             compressed_bytes=row["compressed_bytes"],
             metadata=metadata,
         )
+
+    # -------------------------------------------------------------------------
+    # Session tags - agent-assigned labels for session lookup
+    # -------------------------------------------------------------------------
+
+    def tag_session(self, cwd: str) -> str:
+        """Create a tag for the current session context.
+
+        Generates a random tag and stores it with CWD + timestamp.
+        The session ID is resolved lazily when get_session_by_tag is called.
+
+        Args:
+            cwd: Working directory where the session is running
+
+        Returns:
+            The generated tag (8 char random string)
+        """
+        import secrets
+        tag = secrets.token_hex(4)  # 8 hex chars
+        ts = datetime.now(timezone.utc).isoformat()
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_tags (tag, session_id, created_at, cwd)
+                VALUES (?, NULL, ?, ?)
+                """,
+                (tag, ts, cwd),
+            )
+            conn.commit()
+
+        return tag
+
+    def get_session_by_tag(self, tag: str) -> str | None:
+        """Retrieve a session ID by its tag.
+
+        Resolves the session ID lazily by finding the session that was active
+        in the tagged CWD at the tagged timestamp.
+
+        Args:
+            tag: The tag to look up
+
+        Returns:
+            Session ID if found, None otherwise
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT session_id, created_at, cwd FROM session_tags WHERE tag = ?",
+                (tag,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        # If already resolved, return it
+        if row["session_id"]:
+            return row["session_id"]
+
+        # Resolve: find session active in this CWD around this timestamp
+        created_at = row["created_at"]
+        cwd = row["cwd"]
+
+        # Find sessions with events in this CWD near the tag timestamp
+        # Look for events within a small window around the tag creation time
+        with self.connection() as conn:
+            # Find the session with the most recent event in this CWD
+            # that occurred before or at the tag timestamp
+            result = conn.execute(
+                """
+                SELECT session_id FROM semantic_events
+                WHERE (json_extract(metadata, '$.cwd') = ? OR json_extract(metadata, '$.cwd') LIKE ?)
+                  AND timestamp <= ?
+                  AND session_id IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,
+                (cwd, cwd + "/%", created_at),
+            ).fetchone()
+
+        if not result:
+            return None
+
+        session_id = result["session_id"]
+
+        # Cache the resolved session_id for future lookups
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE session_tags SET session_id = ? WHERE tag = ?",
+                (session_id, tag),
+            )
+            conn.commit()
+
+        return session_id
+
+    def list_session_tags(self, session_id: str | None = None) -> list[dict]:
+        """List all session tags, optionally filtered by session.
+
+        Returns:
+            List of dicts with tag, session_id, created_at, cwd
+        """
+        query = "SELECT * FROM session_tags"
+        params: list = []
+        if session_id:
+            query += " WHERE session_id = ?"
+            params.append(session_id)
+        query += " ORDER BY created_at DESC"
+
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+
+        return [dict(row) for row in rows]
+
+    def delete_session_tag(self, tag: str) -> bool:
+        """Delete a session tag.
+
+        Returns:
+            True if tag was deleted, False if it didn't exist
+        """
+        with self.connection() as conn:
+            cursor = conn.execute("DELETE FROM session_tags WHERE tag = ?", (tag,))
+            conn.commit()
+            return cursor.rowcount > 0

@@ -13,6 +13,14 @@ def _short_sid(session_id: str | None) -> str:
     return sid[:8] if sid else SID_NONE
 
 
+def _format_sid(session_id: str | None, full: bool = False) -> str:
+    """Format session ID - full or first segment (before first dash)."""
+    sid = (session_id or "").strip()
+    if not sid:
+        return SID_NONE
+    return sid if full else sid.split("-", 1)[0]
+
+
 def _relative_time(dt: datetime) -> str:
     now = datetime.now(timezone.utc)
     if dt.tzinfo is None:
@@ -56,7 +64,11 @@ def _parse_since(value: str) -> datetime:
 
 
 def _resolve_session(db: CaptureDB, value: str | None) -> str | None:
-    """Resolve a session id/prefix, or choose the latest session when value is None."""
+    """Resolve a session id/prefix, or choose the latest session when value is None.
+
+    Special values:
+        @latest - Most recent session in the database
+    """
     session_ids = db.get_session_ids()
     if not session_ids:
         return None
@@ -122,6 +134,10 @@ def add_all_flag(parser: argparse.ArgumentParser, *, help: str = "Include all di
 
 def add_fzf_flag(parser: argparse.ArgumentParser, *, help: str = "Interactive select with fzf") -> None:
     parser.add_argument("--fzf", action="store_true", help=help)
+
+
+def add_full_sid_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--full-sid", action="store_true", help="Show full session IDs")
 
 
 def add_limit_flag(parser: argparse.ArgumentParser, default: int = 20) -> None:

@@ -330,9 +330,17 @@ def cmd_events(args: argparse.Namespace) -> int:
     """
     db = CaptureDB()
 
-    # Single event by ID
-    event_id = args.id
-    if event_id is not None:
+    # Single event by ID (accept decimal or hex)
+    raw_id = args.id
+    if raw_id is not None:
+        try:
+            event_id = int(raw_id, 0)
+        except ValueError:
+            try:
+                event_id = int(raw_id, 16)
+            except ValueError:
+                print(f"Invalid event ID: {raw_id}", file=sys.stderr)
+                return 2
         event = db.get_event_by_id(event_id)
         if not event:
             print(f"No event with id {event_id}", file=sys.stderr)
@@ -460,26 +468,25 @@ def cmd_events(args: argparse.Namespace) -> int:
                 print(f"{BOLD}{_short_path(cwd)}{RST}")
                 print()
 
-        # Filter out user_prompts from main timeline (shown separately below)
+        # Top section: last 4 user prompts
+        if session_id:
+            prompts = db.query_events(
+                event_type="user_prompt", session_id=session_id, limit=4
+            )
+            if prompts:
+                print(f"{DIM} prompts{RST}")
+                print(f"{DIM}{'─' * 44}{RST}")
+                for p in reversed(prompts):
+                    print(_format_compact(p))
+                print()
+
+        # Filter out user_prompts from timeline (shown above)
         timeline_events = [
             e for e in reversed(events)
             if (e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type))
             != "user_prompt"
         ]
         _print_compact_rolled(timeline_events)
-
-        # Bottom section: last 4 user prompts
-        if session_id:
-            prompts = db.query_events(
-                event_type="user_prompt", session_id=session_id, limit=4
-            )
-            if prompts:
-                print()
-                print(f"{DIM}{'─' * 44}{RST}")
-                print(f"{DIM} prompts{RST}")
-                print(f"{DIM}{'─' * 44}{RST}")
-                for p in reversed(prompts):
-                    print(_format_compact(p))
 
         return 0
 

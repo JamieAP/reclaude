@@ -8,8 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from .cli_context import _find_latest_session_for_cwd
-from .cli_utils import _relative_time, _session_filter
+from .cli_utils import _relative_time, _session_filter, _format_sid
 from .db import CaptureDB, SemanticEvent
 
 DIM = "\033[2m"
@@ -92,8 +91,17 @@ def _render_event(e: SemanticEvent, is_target: bool) -> list[str]:
     lines: list[str] = []
 
     if etype == "user_prompt":
+        content = e.content.strip()
+        # Collapse system noise (task notifications, system reminders) to one-liner
+        if content.startswith("<task-notification>"):
+            task_id = content.split("<task-id>")[1].split("</task-id>")[0] if "<task-id>" in content else "?"
+            status = content.split("<status>")[1].split("</status>")[0] if "<status>" in content else "?"
+            lines.append(f"  {DIM}· task {task_id} → {status}{RESET}")
+            return lines
+        if content.startswith("<system-reminder>") or content.startswith("<command-name>"):
+            return lines  # skip entirely
         lines.append(f"{arrow}{highlight}{GREEN}▹ You {DIM}({ts}){RESET}{end_hl}{marker}")
-        lines.append(_indent(e.content.strip()))
+        lines.append(_indent(content))
         lines.append("")
 
     elif etype in ("assistant", "plan"):
@@ -238,20 +246,24 @@ def cmd_chat(args: argparse.Namespace) -> int:
     session_arg = args.session
     event_id = args.event_id
 
-    if not show_all and not event_id and not session_arg:
-        # Default to latest session for cwd
-        cwd_session = _find_latest_session_for_cwd(db, os.getcwd())
-        if not cwd_session:
-            print("No session found for current directory", file=sys.stderr)
-            return 1
-        session_arg = cwd_session
-
     CHAT_TYPES = ["user_prompt", "assistant", "plan"]
+    cwd_scope = None  # set when we want cwd-scoped multi-session
+
+    if not show_all and not event_id and not session_arg:
+        # Default: all sessions in current cwd
+        cwd_scope = os.getcwd()
+
+    # Determine effective limit for DB query (0 means unlimited -> use large number)
+    effective_limit = args.limit if args.limit and args.limit > 0 else 50_000
 
     if show_all:
         # All chat events across every session and repo
-        events = db.query_events(event_type=CHAT_TYPES, limit=50_000)
-        events.reverse()  # chronological
+        events = db.query_events(event_type=CHAT_TYPES, limit=effective_limit)
+        events.reverse()  # chronological (oldest first for display)
+    elif cwd_scope:
+        # All sessions for this cwd
+        events = db.query_events(event_type=CHAT_TYPES, cwd=cwd_scope, limit=effective_limit)
+        events.reverse()
     elif session_arg:
         session_id = _session_filter(db, session_arg)
         if not session_id:
@@ -259,7 +271,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         events = db.query_events(
             session_id=session_id,
             event_type=CHAT_TYPES,
-            limit=50_000,
+            limit=effective_limit,
         )
         events.reverse()
     else:
@@ -274,7 +286,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         events = db.query_events(
             session_id=target.session_id,
             event_type=CHAT_TYPES,
-            limit=50_000,
+            limit=effective_limit,
         )
         events.reverse()
 
@@ -286,18 +298,20 @@ def cmd_chat(args: argparse.Namespace) -> int:
     output_lines: list[str] = []
     target_line = 0
     prev_session = None
+    full_sid = args.full_sid
 
     for e in events:
         # In --all mode, insert session separators
-        if show_all and e.session_id != prev_session:
+        if (show_all or cwd_scope) and e.session_id != prev_session:
             meta = e.metadata if isinstance(e.metadata, dict) else {}
             cwd = meta.get("cwd", "")
             proj = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
             ts = e.timestamp.strftime("%Y-%m-%d %H:%M")
+            display_sid = _format_sid(e.session_id, full=full_sid)
             if prev_session is not None:
                 output_lines.append("")
             output_lines.append(f"  {DIM}{'─' * 60}")
-            output_lines.append(f"  ↳ {proj or '?'} · {ts} · {(e.session_id or '?')[:12]}")
+            output_lines.append(f"  ↳ {proj or '?'} · {ts} · {display_sid}")
             output_lines.append(f"  {'─' * 60}{RESET}")
             output_lines.append("")
             prev_session = e.session_id

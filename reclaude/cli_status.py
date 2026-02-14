@@ -8,7 +8,7 @@ import shlex
 import subprocess
 import sys
 
-from .cli_utils import _relative_time, _session_filter
+from .cli_utils import _relative_time, _session_filter, _format_sid
 from .db import CaptureDB
 
 
@@ -45,21 +45,14 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         if healed == 0:
             return 0
 
-    sessions = db.get_sessions_with_info()
+    # Filter at DB level: cwd scoping and limit
+    cwd = None if args.all else os.getcwd()
+    limit = None if args.fzf else args.limit
+    sessions = db.get_sessions_with_info(cwd=cwd, limit=limit)
 
     if not sessions:
         print("No sessions found", file=sys.stderr)
         return 0
-
-    # Filter to cwd by default, --all shows all directories
-    if not args.all:
-        here = os.getcwd()
-        sessions = [
-            s for s in sessions
-            if (s[4] or s[3] or "").rstrip("/") == here.rstrip("/")
-        ]
-
-    sessions = sessions[: args.limit]
 
     if args.fzf:
         return _fzf_select(sessions)
@@ -79,13 +72,14 @@ def cmd_sessions(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, default=str))
         return 0
 
+    full_sid = args.full_sid
     for sid, ts, cnt, cwd, start_cwd, is_active in sessions:
-        short_id = sid.split("-", 1)[0]
+        display_id = _format_sid(sid, full=full_sid)
         age = _relative_time(ts)
         project = (start_cwd or cwd or "").rstrip("/").rsplit("/", 1)[-1]
         active_marker = " *" if is_active else ""
         dir_display = _short_path(start_cwd or cwd or "")
-        print(f"{age:>8s} {short_id} ({cnt} events){active_marker} {project} {dir_display}".rstrip())
+        print(f"{age:>8s} {display_id} ({cnt} events){active_marker} {project} {dir_display}".rstrip())
 
     return 0
 
@@ -121,19 +115,9 @@ def _fzf_select(sessions: list) -> int:
     # Use same Python to ensure --compact flag is available
     reclaude = f"{sys.executable} -m reclaude.cli"
 
-    # Preview: events render immediately, summary appends async via temp file
     preview_cmd = (
         "SID=$(echo {} | sed 's/\\x1b\\[[0-9;]*m//g' | awk '{print $3}'); "
-        "SFILE=/tmp/reclaude-summary-$SID; "
-        # Show cached summary at top if available
-        "if [ -f \"$SFILE\" ]; then "
-        "echo \"\\033[1;35m\" ; cat \"$SFILE\"; echo \"\\033[0m\"; "
-        "echo '\\033[2m───────────────────────────────\\033[0m'; echo; "
-        "fi; "
-        # Events (instant)
-        f"{reclaude} events 20 --compact --session $SID; "
-        # Fire off summary generation in background for next preview
-        f"({reclaude} session-summary $SID > \"$SFILE\" 2>/dev/null &)"
+        f"{reclaude} events 20 --compact --all --session $SID"
     )
 
     # Dark theme: muted bg, cyan accents, dim borders
