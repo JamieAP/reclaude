@@ -147,7 +147,7 @@ fn make_event(
     }
 }
 
-/// Insert event into LanceDB and upsert session in SQLite.
+/// Insert event into the events table and upsert session metadata.
 async fn insert_and_upsert(db: &Database, event: &Event) -> anyhow::Result<i64> {
     let id = db.events.insert(event).await?;
     if let Some(sid) = &event.session_id {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reclaude capture hook - auto-installs deps via uv on first run
+# reclaude capture hook - forwards hook events to the Rust binary
 set -euo pipefail
 
 HOOK_TYPE="${1:-}"
@@ -8,16 +8,14 @@ if [[ -z "$HOOK_TYPE" ]]; then
     exit 1
 fi
 
-# Find plugin root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# Fast path: use venv directly if it exists (avoids uv lockfile resolution)
-if [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
-    exec "$PLUGIN_ROOT/.venv/bin/python" -m reclaude.capture "$HOOK_TYPE"
-elif command -v uv &>/dev/null; then
-    # Cold start: uv will create venv + install deps
-    exec uv run --project "$PLUGIN_ROOT" python -m reclaude.capture "$HOOK_TYPE"
+# Look for reclaude binary in common locations
+if command -v reclaude &>/dev/null; then
+    exec reclaude capture "$HOOK_TYPE"
+elif [[ -x "$HOME/.local/bin/reclaude" ]]; then
+    exec "$HOME/.local/bin/reclaude" capture "$HOOK_TYPE"
+elif [[ -x "$HOME/.cargo/bin/reclaude" ]]; then
+    exec "$HOME/.cargo/bin/reclaude" capture "$HOOK_TYPE"
 else
+    # Binary not found - silently exit so Claude isn't blocked
     exit 0
 fi

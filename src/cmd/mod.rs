@@ -1,3 +1,4 @@
+pub mod backfill;
 pub mod chat;
 pub mod embed;
 pub mod events;

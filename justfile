@@ -5,67 +5,55 @@ default: status
 
 # Show capture statistics
 status:
-    uv run reclaude status
+    reclaude status
 
 # Show recent sessions
 sessions n="10":
-    uv run reclaude sessions {{n}}
+    reclaude sessions {{n}}
 
-# Show recent events (supports --type, --session, --semantic)
+# Show recent events
 events n="20" *args:
-    uv run reclaude events {{n}} {{args}}
+    reclaude events {{n}} {{args}}
 
-# Query files touched by Claude
-query *args:
-    uv run reclaude query {{args}}
-
-# Show LLM context bundle
-context *args:
-    uv run reclaude context {{args}}
-
-# Store a learning
-learn content:
-    uv run reclaude learn "{{content}}"
-
-# Query learnings
-learnings n="30" *args:
-    uv run reclaude learnings {{n}} {{args}}
+# Search events (FTS or semantic)
+search *args:
+    reclaude search {{args}}
 
 # Focus synthesis via Gemini
 focus scale="hour":
-    uv run reclaude focus {{scale}}
+    reclaude focus {{scale}}
 
 # Transcript management
 transcripts cmd="sync":
-    uv run reclaude transcripts {{cmd}}
+    reclaude transcripts {{cmd}}
 
 # Tail capture log
 log:
     tail -f ~/.reclaude/capture.log
 
+# Build release binary
+build:
+    cargo build --release
+
+# Build and install to ~/.local/bin
+install: build
+    cp target/release/reclaude ~/.local/bin/reclaude
+
 # Run tests
 test *args:
-    uv run --extra dev pytest {{args}}
+    cargo test {{args}}
 
-# Run tests with coverage
-test-cov:
-    uv run --extra dev pytest --cov=reclaude --cov-report=term-missing
-
-# Install package in dev mode
-install:
-    uv pip install -e ".[dev]"
-
-# Show paths
-path:
-    uv run reclaude path
+# Backfill events from Python capture.db
+backfill *args:
+    reclaude backfill {{args}}
 
 # Launch web UI (serves built frontend + API)
 ui:
-    uv run reclaude ui
+    reclaude ui
 
-# Serve API only (for production or testing built frontend)
+# Serve API only
 api host="127.0.0.1" port="8420":
-    uv run reclaude ui --host {{host}} --port {{port}} --no-open
+    reclaude ui --host {{host}} --port {{port}} --no-open
 
 # Local dev: API + Vite dev server (with HMR)
 serve:
@@ -74,7 +62,7 @@ serve:
 
     # Start API server in background
     echo "Starting API server on http://127.0.0.1:8420..."
-    uv run reclaude ui --no-open --reload &
+    reclaude ui --no-open &
     API_PID=$!
 
     # Give API a moment to start
@@ -82,7 +70,7 @@ serve:
 
     # Start Vite dev server in foreground
     echo "Starting Vite dev server..."
-    cd reclaude/frontend && npm run dev &
+    cd frontend && npm run dev &
     VITE_PID=$!
 
     # Trap to kill both on exit
@@ -90,22 +78,3 @@ serve:
 
     # Wait for either to exit
     wait
-
-# Full plugin reinstall (requires Claude restart)
-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Removing cached plugin..."
-    rm -rf ~/.claude/plugins/cache/reclaude
-    echo "Installing from local marketplace..."
-    TMPDIR=~/.claude/plugins/cache claude plugin install reclaude@reclaude
-    echo "Done. Restart Claude to load."
-
-# Fast sync to plugin cache (no restart needed)
-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    CACHE=~/.claude/plugins/cache/reclaude/reclaude/1.0.0
-    cp -r commands/ skills/ hooks/ "$CACHE/"
-    cp .claude-plugin/*.json "$CACHE/.claude-plugin/"
-    echo "Synced."

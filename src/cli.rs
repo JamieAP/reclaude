@@ -71,6 +71,22 @@ pub enum Commands {
     /// Get session ID by tag
     #[command(name = "get-session")]
     GetSession(GetSessionArgs),
+
+    /// Backfill events from Python capture.db
+    Backfill(BackfillArgs),
+}
+
+// ── Backfill ────────────────────────────────────────────────────────
+
+#[derive(clap::Args)]
+pub struct BackfillArgs {
+    /// Path to Python capture.db (default: ~/.reclaude/capture.db)
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Dry run: show counts without modifying anything
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 // ── Events ──────────────────────────────────────────────────────────
@@ -516,6 +532,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<()> {
                 }
             }
             Ok(())
+        }
+        Commands::Backfill(ref args) => {
+            let db = crate::db::Database::open().await?;
+            crate::cmd::backfill::run(args, &db).await
         }
     }
 }

@@ -1,0 +1,60 @@
+[package]
+name = "reclaude"
+version = "0.1.0"
+edition = "2021"
+description = "Semantic event capture and analysis for Claude Code sessions"
+license = "MIT"
+
+[[bin]]
+name = "reclaude"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1.6"
+zerocopy = { version = "0.8", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Embeddings
+ort = "2.0.0-rc.11"
+tokenizers = "0.21"
+
+# Compression
+zstd = "0.13"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-appender = "0.2"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
