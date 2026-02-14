@@ -934,7 +934,11 @@ async fn capture_subagent_output(
 }
 
 fn extract_task_id_from_result(tool_result: &Value) -> Option<String> {
-    let content = val_str(tool_result, "content")?;
+    // Handle both string content and content-block format (array of {type, text})
+    let content = extract_tool_output(tool_result);
+    if content.is_empty() {
+        return None;
+    }
     for line in content.lines() {
         let lower = line.to_lowercase();
         if lower.contains("id:") {

@@ -88,8 +88,8 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
         return display_results(&results, args);
     }
 
-    // Execute FTS search
-    let results = match db
+    // Execute FTS search (auto-rebuilds stale index on first failure)
+    let results = db
         .events
         .search_fts(
             &query,
@@ -98,18 +98,7 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
             cwd.as_deref(),
             args.limit,
         )
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = format!("{e}");
-            if msg.contains("index") || msg.contains("not found") || msg.contains("no such") {
-                eprintln!("FTS index not built yet. Run: reclaude search --rebuild");
-                return Ok(());
-            }
-            return Err(e);
-        }
-    };
+        .await?;
 
     if results.is_empty() {
         println!("No results.");

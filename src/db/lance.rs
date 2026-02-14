@@ -207,7 +207,31 @@ impl EventStore {
     }
 
     /// Full-text search over event content using tantivy FTS index.
+    ///
+    /// If the FTS index is stale or missing, auto-rebuilds once and retries.
+    /// LanceDB can panic (in Arrow cast code) when the index is severely
+    /// out of date, so we catch that and treat it as a rebuild-worthy error.
     pub async fn search_fts(
+        &self,
+        query: &str,
+        event_types: &[&str],
+        session_id: Option<&str>,
+        cwd: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Event>> {
+        match self.try_fts_query(query, event_types, session_id, cwd, limit).await {
+            Ok(events) => Ok(events),
+            Err(e) => {
+                tracing::debug!("FTS query failed ({e}), rebuilding index and retrying");
+                self.rebuild_fts_index().await?;
+                self.try_fts_query(query, event_types, session_id, cwd, limit).await
+            }
+        }
+    }
+
+    /// Execute an FTS query against the existing index. Returns an error
+    /// if the index is missing, stale, or corrupted.
+    async fn try_fts_query(
         &self,
         query: &str,
         event_types: &[&str],
