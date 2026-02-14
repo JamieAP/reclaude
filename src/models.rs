@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // ── Event Types ─────────────────────────────────────────────────────
 
-/// All 21 semantic event types captured from Claude Code sessions.
+/// All 22 semantic event types captured from Claude Code sessions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
@@ -21,6 +21,7 @@ pub enum EventType {
     SessionStart,
     SessionEnd,
     SubagentStop,
+    PreToolUse,
     PermissionRequest,
     Notification,
     TaskCreate,
@@ -39,7 +40,7 @@ impl EventType {
             Self::UserPrompt | Self::Assistant | Self::Plan | Self::Thinking => {
                 EventCategory::Conversation
             }
-            Self::ToolUse | Self::FileDiff | Self::PlanFile | Self::TodoWrite => {
+            Self::ToolUse | Self::FileDiff | Self::PlanFile | Self::TodoWrite | Self::PreToolUse => {
                 EventCategory::Action
             }
             Self::SessionStart
@@ -72,6 +73,7 @@ impl EventType {
             Self::SessionStart => "session_start",
             Self::SessionEnd => "session_end",
             Self::SubagentStop => "subagent_stop",
+            Self::PreToolUse => "pre_tool_use",
             Self::PermissionRequest => "permission_request",
             Self::Notification => "notification",
             Self::TaskCreate => "task_create",
@@ -108,6 +110,7 @@ impl FromStr for EventType {
             "session_start" => Ok(Self::SessionStart),
             "session_end" => Ok(Self::SessionEnd),
             "subagent_stop" => Ok(Self::SubagentStop),
+            "pre_tool_use" => Ok(Self::PreToolUse),
             "permission_request" => Ok(Self::PermissionRequest),
             "notification" => Ok(Self::Notification),
             "task_create" => Ok(Self::TaskCreate),

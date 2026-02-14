@@ -40,9 +40,10 @@ pub async fn process_hook(hook_type: &str) -> anyhow::Result<()> {
             let trigger = &s["SessionStart:".len()..];
             capture_session_start(&payload, trigger, &db).await
         }
-        s if s.starts_with("PreToolUse") => {
-            let _ = s;
-            Ok(()) // No-op (kept for hook registration compatibility)
+        "PreToolUse" => capture_pre_tool_use(&payload, &db).await,
+        s if s.starts_with("PreToolUse:") => {
+            // PreToolUse:ToolName format - capture with tool name from command
+            capture_pre_tool_use(&payload, &db).await
         }
         _ => {
             warn!(hook_type, "unknown hook type");
@@ -1211,6 +1212,44 @@ async fn capture_permission_request(payload: &Value, db: &Database) -> anyhow::R
 
     let id = insert_and_upsert(db, &event).await?;
     info!(event_id = id, %tool_name, "permission_request");
+    Ok(())
+}
+
+async fn capture_pre_tool_use(payload: &Value, db: &Database) -> anyhow::Result<()> {
+    let session_id = match val_str(payload, "session_id") {
+        Some(sid) => sid,
+        None => return Ok(()),
+    };
+
+    let tool_name = val_str(payload, "tool_name").unwrap_or_else(|| "unknown".to_string());
+    let git = git_for_payload(payload);
+    let cwd = val_str(payload, "cwd");
+
+    // Extract tool input for context (truncated for storage)
+    let tool_input = payload
+        .get("tool_input")
+        .map(|v| truncate(&v.to_string(), MAX_TOOL_INPUT_LENGTH));
+
+    let metadata = json!({
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "transcript_path": val_str(payload, "transcript_path"),
+    });
+
+    let event = make_event(
+        EventType::PreToolUse,
+        &format!("Pre tool use: {tool_name}"),
+        Some(&session_id),
+        cwd.as_deref(),
+        &git,
+        Some(&tool_name),
+        None,
+        metadata,
+        None,
+    );
+
+    let id = insert_and_upsert(db, &event).await?;
+    info!(event_id = id, %tool_name, "pre_tool_use");
     Ok(())
 }
 
