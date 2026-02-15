@@ -16,21 +16,25 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
         }
     }
 
-    if args.query.is_empty() {
+    let has_query = args.query.iter().any(|t| !t.trim().is_empty());
+    if !has_query {
         eprintln!("Usage: reclaude search <query>");
         return Ok(());
     }
 
-    // Build FTS query with boolean operators
-    let mut parts: Vec<String> = vec![args.query.join(" ")];
+    // Build FTS query with boolean operators.
+    // Quote each term to prevent FTS5 syntax errors from special chars
+    // like dots (capture.rs), slashes (src/db), etc.
+    let quoted_query = args.query.iter().map(|t| fts_quote(t)).collect::<Vec<_>>().join(" ");
+    let mut parts: Vec<String> = vec![quoted_query];
     for t in &args.and_terms {
-        parts.push(format!("AND {t}"));
+        parts.push(format!("AND {}", fts_quote(t)));
     }
     for t in &args.or_terms {
-        parts.push(format!("OR {t}"));
+        parts.push(format!("OR {}", fts_quote(t)));
     }
     for t in &args.not_terms {
-        parts.push(format!("NOT {t}"));
+        parts.push(format!("NOT {}", fts_quote(t)));
     }
     let query = parts.join(" ");
 
@@ -48,10 +52,12 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
         Some(args.cwd.clone().unwrap_or_else(cmd::current_dir))
     };
 
-    // Resolve event type filter
+    // Resolve event type filter (supports aliases like "diff" → "file_diff")
     let event_types: Vec<&str> = if let Some(ref et) = args.event_type {
         if et == "chat" {
             vec!["user_prompt", "assistant", "plan"]
+        } else if let Some(config) = crate::models::resolve_type_alias(et) {
+            config.semantic_types.iter().map(|t| t.as_str()).collect()
         } else {
             vec![et.as_str()]
         }
@@ -204,6 +210,22 @@ fn clean_content(e: &Event, meta: &serde_json::Value, verbose: bool) -> String {
                 preview
             }
         }
+    }
+}
+
+/// Quote a search term for FTS5 MATCH to avoid syntax errors from
+/// special characters (dots, slashes, hyphens, etc.).
+/// Preserves trailing `*` for FTS5 prefix queries (e.g., `auth*`).
+fn fts_quote(term: &str) -> String {
+    let (body, suffix) = if let Some(stripped) = term.strip_suffix('*') {
+        (stripped, "*")
+    } else {
+        (term, "")
+    };
+    if body.contains(|c: char| !c.is_alphanumeric() && c != '_') {
+        format!("\"{}\"{suffix}", body.replace('"', "\"\""))
+    } else {
+        format!("{body}{suffix}")
     }
 }
 

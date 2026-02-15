@@ -8,14 +8,23 @@ if [[ -z "$HOOK_TYPE" ]]; then
     exit 1
 fi
 
-# Look for reclaude binary in common locations
+# Resolve reclaude binary location
+RECLAUDE=""
 if command -v reclaude &>/dev/null; then
-    exec reclaude capture "$HOOK_TYPE"
+    RECLAUDE="reclaude"
 elif [[ -x "$HOME/.local/bin/reclaude" ]]; then
-    exec "$HOME/.local/bin/reclaude" capture "$HOOK_TYPE"
+    RECLAUDE="$HOME/.local/bin/reclaude"
 elif [[ -x "$HOME/.cargo/bin/reclaude" ]]; then
-    exec "$HOME/.cargo/bin/reclaude" capture "$HOOK_TYPE"
+    RECLAUDE="$HOME/.cargo/bin/reclaude"
 else
     # Binary not found - silently exit so Claude isn't blocked
     exit 0
 fi
+
+# On SessionStart, archive transcripts in background before Claude
+# rotates them (~7 day retention). Runs once per session start/resume/compact.
+if [[ "$HOOK_TYPE" == SessionStart:* ]]; then
+    "$RECLAUDE" transcripts sync &>/dev/null &
+fi
+
+exec "$RECLAUDE" capture "$HOOK_TYPE"
