@@ -93,7 +93,8 @@ pub struct BackfillArgs {
 
 #[derive(clap::Args)]
 pub struct EventsArgs {
-    /// Number of events (default varies by type)
+    /// Max events to show (default varies by type)
+    #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
     /// Filter by session ID (prefix match)
@@ -141,8 +142,8 @@ pub struct EventsArgs {
 
 #[derive(clap::Args)]
 pub struct SessionsArgs {
-    /// Number of sessions to show (default: 10)
-    #[arg(default_value = "10")]
+    /// Max sessions to show (default: 10)
+    #[arg(short = 'n', long, default_value = "10")]
     pub limit: usize,
 
     /// Show sessions from all directories (default: cwd only)

@@ -14,7 +14,7 @@ You have access to `reclaude` - a searchable database of captured Claude Code se
 
 | Situation | What to run |
 |-----------|-------------|
-| Starting a new session | `reclaude events --all 10` - what happened recently? |
+| Starting a new session | `reclaude events --all -n 10` - what happened recently? |
 | Picking up previous work | `reclaude search "feature name" --all` - find prior context |
 | "What changed in this file?" | `reclaude search "filename" -t diff --all` |
 | "What was decided about X?" | `reclaude search --semantic "decision about X" --all` |
@@ -53,18 +53,18 @@ reclaude search "config" --fzf --all
 ### Browse Events
 
 ```bash
-# Recent events (current project) - limit is positional
-reclaude events 20
+# Recent events (current project)
+reclaude events -n 20
 
 # Recent events (all projects)
-reclaude events --all 20
+reclaude events --all -n 20
 
 # Filter by type: prompt, diff, plan, tool, compaction
-reclaude events -t diff 10
+reclaude events -t diff -n 10
 reclaude events -t plan --all
 
 # Full content (no truncation)
-reclaude events --full 5
+reclaude events --full -n 5
 
 # Single event by ID
 reclaude events --id 42000
@@ -100,7 +100,7 @@ reclaude search "src/db/events.rs" -t diff --all -n 10
 
 ```bash
 # Recent sessions
-reclaude sessions 10
+reclaude sessions -n 10
 
 # What's the overall status?
 reclaude status
@@ -131,7 +131,7 @@ reclaude files --all
 
 | Don't | Do instead |
 |-------|-----------|
-| Guess what happened last session | `reclaude events --all 15` |
+| Guess what happened last session | `reclaude events --all -n 15` |
 | Assume a file's history | `reclaude files "filename" --all` |
 | Ask the user "what were we working on?" | `reclaude search --semantic "recent work" --all -n 5` |
 | Re-derive a decision that was already made | `reclaude search --semantic "decided to..." --all` |
