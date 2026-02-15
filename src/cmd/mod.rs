@@ -11,16 +11,26 @@ pub mod transcripts;
 
 use chrono::{DateTime, Utc};
 
-// ── ANSI Colors ──────────────────────────────────────────────────────
+// ── ANSI Colors (TTY-aware) ──────────────────────────────────────────
 
-pub const DIM: &str = "\x1b[2m";
-pub const RESET: &str = "\x1b[0m";
-pub const CYAN: &str = "\x1b[36m";
-pub const PURPLE: &str = "\x1b[35m";
-pub const YELLOW: &str = "\x1b[33m";
-pub const GREEN: &str = "\x1b[32m";
-pub const RED: &str = "\x1b[31m";
-pub const BOLD: &str = "\x1b[1m";
+use std::io::IsTerminal;
+use std::sync::OnceLock;
+
+fn use_color() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+    })
+}
+
+pub fn dim() -> &'static str { if use_color() { "\x1b[2m" } else { "" } }
+pub fn reset() -> &'static str { if use_color() { "\x1b[0m" } else { "" } }
+pub fn cyan() -> &'static str { if use_color() { "\x1b[36m" } else { "" } }
+pub fn purple() -> &'static str { if use_color() { "\x1b[35m" } else { "" } }
+pub fn yellow() -> &'static str { if use_color() { "\x1b[33m" } else { "" } }
+pub fn green() -> &'static str { if use_color() { "\x1b[32m" } else { "" } }
+pub fn red() -> &'static str { if use_color() { "\x1b[31m" } else { "" } }
+pub fn bold() -> &'static str { if use_color() { "\x1b[1m" } else { "" } }
 
 // ── Shared Formatting Utilities ──────────────────────────────────────
 
@@ -47,7 +57,7 @@ pub fn short_sid(session_id: Option<&str>) -> String {
     }
 }
 
-/// Human-readable relative time (e.g., "5m ago", "2h ago").
+/// Human-readable relative time (e.g., "5m", "2h").
 pub fn relative_time(timestamp: &str) -> String {
     let dt = match DateTime::parse_from_rfc3339(timestamp) {
         Ok(dt) => dt.with_timezone(&Utc),
@@ -62,18 +72,18 @@ pub fn relative_time(timestamp: &str) -> String {
         return "now".to_string();
     }
     if secs < 60 {
-        return format!("{secs}s ago");
+        return format!("{secs}s");
     }
     let mins = secs / 60;
     if mins < 60 {
-        return format!("{mins}m ago");
+        return format!("{mins}m");
     }
     let hours = mins / 60;
     if hours < 24 {
-        return format!("{hours}h ago");
+        return format!("{hours}h");
     }
     let days = hours / 24;
-    format!("{days}d ago")
+    format!("{days}d")
 }
 
 /// Replace $HOME with ~ for display.

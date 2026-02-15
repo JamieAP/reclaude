@@ -4,7 +4,7 @@ use anyhow::Context;
 use rusqlite::Connection;
 
 use crate::cli::BackfillArgs;
-use crate::cmd::{BOLD, CYAN, DIM, GREEN, RED, RESET};
+use crate::cmd;
 use crate::db::Database;
 use crate::models::Event;
 
@@ -33,6 +33,9 @@ fn meta_str(meta: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
+    #[allow(non_snake_case)]
+    let (BOLD, CYAN, DIM, GREEN, RED, RESET) =
+        (cmd::bold(), cmd::cyan(), cmd::dim(), cmd::green(), cmd::red(), cmd::reset());
     let capture_path = args
         .from
         .clone()

@@ -1,5 +1,5 @@
 use crate::cli::SearchArgs;
-use crate::cmd::{self, DIM, CYAN, PURPLE, RESET};
+use crate::cmd;
 use crate::db::Database;
 use crate::fzf;
 use crate::models::Event;
@@ -115,6 +115,9 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
 }
 
 fn display_results(results: &[Event], args: &SearchArgs) -> anyhow::Result<()> {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN, PURPLE) = (cmd::dim(), cmd::reset(), cmd::cyan(), cmd::purple());
+
     // JSON output
     if args.json {
         let payload: Vec<serde_json::Value> = results
@@ -146,15 +149,11 @@ fn display_results(results: &[Event], args: &SearchArgs) -> anyhow::Result<()> {
     // Human-readable output
     let full_sid = args.full_sid;
 
-    // Header
-    println!("\n  {DIM}TIME        SESSION   TYPE            CONTENT{RESET}");
-    println!("  {DIM}{}{RESET}", "\u{2500}".repeat(60));
-
     for e in results {
         let ts = if e.timestamp.len() >= 16 {
-            &e.timestamp[5..16] // MM-DD HH:MM
+            e.timestamp[5..16].replace('T', " ") // "02-15 12:34"
         } else {
-            &e.timestamp
+            e.timestamp.clone()
         };
         let sid = cmd::format_sid(e.session_id.as_deref(), full_sid);
         let meta = e.metadata();
@@ -169,20 +168,12 @@ fn display_results(results: &[Event], args: &SearchArgs) -> anyhow::Result<()> {
         let preview = clean_content(e, &meta, args.verbose);
 
         println!(
-            "  {DIM}{ts:10}{RESET}  {PURPLE}{sid:8}{RESET}  {CYAN}{icon} {etype:14}{RESET}   {preview}"
+            "{DIM}{ts}{RESET} {PURPLE}{sid}{RESET} {CYAN}{icon} {etype}{RESET} {preview}"
         );
     }
 
-    let query = args.query.join(" ");
     let mode = if args.semantic { "semantic" } else { "FTS" };
-    println!(
-        "\n  {DIM}{}",
-        "\u{2500}".repeat(60)
-    );
-    println!(
-        "  {} result(s) for \"{query}\" ({mode}){RESET}\n",
-        results.len()
-    );
+    println!("{} results ({mode})", results.len());
 
     Ok(())
 }
@@ -206,7 +197,7 @@ fn clean_content(e: &Event, meta: &serde_json::Value, verbose: bool) -> String {
             if verbose {
                 e.content.clone()
             } else {
-                let preview: String = e.content.replace('\n', " ").chars().take(200).collect();
+                let preview: String = e.content.replace('\n', " ").chars().take(300).collect();
                 preview
             }
         }
@@ -259,6 +250,8 @@ fn type_icon(event_type: &str) -> &'static str {
 }
 
 fn fzf_results(results: &[Event]) -> anyhow::Result<()> {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN) = (cmd::dim(), cmd::reset(), cmd::cyan());
     let lines: Vec<String> = results
         .iter()
         .map(|e| {

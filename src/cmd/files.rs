@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::cli::FilesArgs;
-use crate::cmd::{self, DIM, RESET};
+use crate::cmd;
 use crate::db::Database;
 
 /// Tools that touch files (all have file_path parameter in their input).
@@ -117,7 +117,9 @@ pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
                     tools.join(",")
                 );
             } else {
-                println!("{path}  {DIM}({age}, {}x){RESET}", info.count);
+                #[allow(non_snake_case)]
+                let (DIM, RESET) = (cmd::dim(), cmd::reset());
+                println!("{path}  {DIM}{age} {}x{RESET}", info.count);
             }
         }
     }

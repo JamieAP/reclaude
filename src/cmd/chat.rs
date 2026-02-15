@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use crate::cli::ChatArgs;
-use crate::cmd::{self, DIM, CYAN, GREEN, YELLOW, BOLD, RESET};
+use crate::cmd;
 use crate::db::Database;
 use crate::models::Event;
 
@@ -72,6 +72,9 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
     // Reverse for chronological display
     let events: Vec<&Event> = events.iter().rev().collect();
 
+    #[allow(non_snake_case)]
+    let (DIM, RESET) = (cmd::dim(), cmd::reset());
+
     // Render events
     let mut output_lines: Vec<String> = Vec::new();
     let mut target_line: usize = 0;
@@ -138,6 +141,9 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
 
 /// Render a single event as chat lines.
 fn render_event(e: &Event, is_target: bool) -> Vec<String> {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN, GREEN, YELLOW, BOLD) =
+        (cmd::dim(), cmd::reset(), cmd::cyan(), cmd::green(), cmd::yellow(), cmd::bold());
     let ts = if e.timestamp.len() >= 16 {
         &e.timestamp[11..16] // HH:MM
     } else {
@@ -189,7 +195,7 @@ fn render_event(e: &Event, is_target: bool) -> Vec<String> {
             let status = if ok {
                 format!("{GREEN}\u{2713}{RESET}")
             } else {
-                format!("\x1b[31m\u{2717}{RESET}")
+                format!("{}\u{2717}{RESET}", cmd::red())
             };
             let icon = tool_icon(tool);
             let summary = crate::cmd::events::tool_preview(tool, &e.content);

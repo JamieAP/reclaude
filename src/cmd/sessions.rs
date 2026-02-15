@@ -1,5 +1,5 @@
 use crate::cli::SessionsArgs;
-use crate::cmd::{self, DIM, CYAN, BOLD, GREEN, RESET};
+use crate::cmd;
 use crate::db::Database;
 use crate::fzf;
 
@@ -44,7 +44,7 @@ pub async fn run(args: &SessionsArgs, db: &Database) -> anyhow::Result<()> {
         let active = if s.is_active { " *" } else { "" };
 
         println!(
-            "{age:>8} {display_id} ({} events){active} {project} {dir}",
+            "{age} {display_id} {}ev{active} {project} {dir}",
             s.event_count
         );
     }
@@ -53,6 +53,9 @@ pub async fn run(args: &SessionsArgs, db: &Database) -> anyhow::Result<()> {
 }
 
 fn fzf_select(sessions: &[crate::models::Session]) -> anyhow::Result<()> {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN, BOLD, GREEN) =
+        (cmd::dim(), cmd::reset(), cmd::cyan(), cmd::bold(), cmd::green());
     let mut lines = Vec::new();
 
     for s in sessions {

@@ -1,5 +1,5 @@
 use crate::cli::EventsArgs;
-use crate::cmd::{self, DIM, CYAN, GREEN, RED, YELLOW, BOLD, RESET};
+use crate::cmd;
 use crate::db::Database;
 use crate::fzf;
 use crate::models::{resolve_type_alias, Event};
@@ -168,7 +168,11 @@ fn event_to_json(e: &Event, full: bool) -> serde_json::Value {
 
 /// Format a single event line for CLI output.
 fn format_event_line(e: &Event, full: bool) -> String {
-    let ts = &e.timestamp[..19]; // trim timezone for display
+    let ts = if e.timestamp.len() >= 16 {
+        e.timestamp[5..16].replace('T', " ") // "02-15 12:34"
+    } else {
+        e.timestamp.clone()
+    };
     let sid = cmd::short_sid(e.session_id.as_deref());
     let meta = e.metadata();
 
@@ -178,42 +182,43 @@ fn format_event_line(e: &Event, full: bool) -> String {
             let op = meta["operation"].as_str().unwrap_or("?");
             let added = meta["lines_added"].as_i64().unwrap_or(0);
             let removed = meta["lines_removed"].as_i64().unwrap_or(0);
-            format!("[{ts}] {sid} {op} {file_path} (+{added}/-{removed})")
+            format!("{ts} {sid} {op} {file_path} (+{added}/-{removed})")
         }
         "tool_use" => {
             let tool = meta["tool_name"].as_str().unwrap_or("?");
             let success = meta["success"].as_bool().unwrap_or(true);
             let status = if success { "ok" } else { "FAIL" };
-            if full {
-                format!("[{ts}] {sid} {tool} ({status})")
-            } else {
-                let preview: String = e.content.chars().take(150).collect();
-                let preview = preview.replace('\n', " ");
-                format!("[{ts}] {sid} {tool} ({status}) {preview}")
-            }
+            let summary = tool_preview(tool, &e.content);
+            format!("{ts} {sid} {tool} ({status}) {summary}")
+        }
+        "pre_tool_use" => {
+            let tool = meta["tool_name"].as_str().unwrap_or("?");
+            format!("{ts} {sid} pre_tool_use: {tool}")
         }
         "user_prompt" | "plan" => {
             if full {
-                format!("[{ts}] {sid}")
+                format!("{ts} {sid}")
             } else {
-                let len = if e.event_type == "plan" { 300 } else { 200 };
-                let preview: String = e.content.chars().take(len).collect();
+                let preview: String = e.content.chars().take(300).collect();
                 let preview = preview.replace('\n', " ");
-                let ellipsis = if e.content.len() > len { "..." } else { "" };
-                format!("[{ts}] {sid} {preview}{ellipsis}")
+                let ellipsis = if e.content.chars().count() > 300 { "..." } else { "" };
+                format!("{ts} {sid} {preview}{ellipsis}")
             }
         }
         _ => {
-            let preview: String = e.content.chars().take(200).collect();
+            let preview: String = e.content.chars().take(300).collect();
             let preview = preview.replace('\n', " ");
-            let ellipsis = if e.content.len() > 200 { "..." } else { "" };
-            format!("[{ts}] {sid} {}: {preview}{ellipsis}", e.event_type)
+            let ellipsis = if e.content.chars().count() > 300 { "..." } else { "" };
+            format!("{ts} {sid} {}: {preview}{ellipsis}", e.event_type)
         }
     }
 }
 
 /// Compact single-line format for fzf preview panes.
 fn format_compact(e: &Event) -> String {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN, GREEN, RED, YELLOW, BOLD) =
+        (cmd::dim(), cmd::reset(), cmd::cyan(), cmd::green(), cmd::red(), cmd::yellow(), cmd::bold());
     let age = cmd::relative_time(&e.timestamp);
     let meta = e.metadata();
 
@@ -320,6 +325,8 @@ pub fn tool_preview(tool: &str, content: &str) -> String {
 }
 
 fn fzf_events(events: &[&Event]) -> anyhow::Result<()> {
+    #[allow(non_snake_case)]
+    let (DIM, RESET, CYAN) = (cmd::dim(), cmd::reset(), cmd::cyan());
     let lines: Vec<String> = events
         .iter()
         .map(|e| {
