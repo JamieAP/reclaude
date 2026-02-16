@@ -125,7 +125,7 @@ fn make_event(
     vector: Option<Vec<f32>>,
 ) -> Event {
     Event {
-        id: 0, // assigned by EventStore::insert
+        id: 0, // assigned on insert
         timestamp: now_iso(),
         event_type: event_type.to_string(),
         category: event_type.category().to_string(),

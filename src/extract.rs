@@ -155,7 +155,7 @@ fn make_extract_event(
     metadata: Value,
 ) -> Event {
     Event {
-        id: 0, // assigned by EventStore::insert
+        id: 0, // assigned on insert
         timestamp: timestamp.to_string(),
         event_type: event_type.to_string(),
         category: event_type.category().to_string(),
