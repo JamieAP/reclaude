@@ -8,22 +8,12 @@ use axum::routing::get;
 use axum::Router;
 use tower_http::cors::CorsLayer;
 
-use crate::db::events::EventStore;
-use crate::db::sqlite::MetadataDb;
-
-/// Shared application state - MetadataDb wrapped in tokio Mutex for async safety.
-struct AppState {
-    events: EventStore,
-    meta: tokio::sync::Mutex<MetadataDb>,
-}
+use crate::db::Database;
 
 /// Start the axum web server.
 pub async fn serve(host: &str, port: u16, no_open: bool) -> anyhow::Result<()> {
-    let db = crate::db::Database::open().await?;
-    let state = Arc::new(AppState {
-        events: db.events,
-        meta: tokio::sync::Mutex::new(db.meta),
-    });
+    let db = Database::open().await?;
+    let state = Arc::new(db);
 
     let api_routes = Router::new()
         .route("/health", get(health))
@@ -113,7 +103,7 @@ struct EventsQuery {
 }
 
 async fn list_events(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<Database>>,
     Query(params): Query<EventsQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let limit = params.limit.unwrap_or(100).min(1000);
@@ -124,7 +114,6 @@ async fn list_events(
     };
 
     let events = state
-        .events
         .query(
             &event_types,
             params.session_id.as_deref(),
@@ -143,11 +132,10 @@ async fn list_events(
 }
 
 async fn get_event(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<Database>>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let event = state
-        .events
         .get_by_id(id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -159,11 +147,11 @@ async fn get_event(
 }
 
 async fn list_sessions(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<Database>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let meta = state.meta.lock().await;
-    let sessions = meta
+    let sessions = state
         .list_sessions(None, 100)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let payload: Vec<serde_json::Value> = sessions
@@ -185,16 +173,14 @@ async fn list_sessions(
 }
 
 async fn statistics(
-    State(state): State<Arc<AppState>>,
+    State(state): State<Arc<Database>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let total = state
-        .events
         .count()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let counts = state
-        .events
         .counts_by_type()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

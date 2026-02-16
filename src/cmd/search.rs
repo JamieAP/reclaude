@@ -9,7 +9,7 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
     // Rebuild FTS index if requested
     if args.rebuild {
         eprint!("Rebuilding FTS index... ");
-        db.events.rebuild_fts_index().await?;
+        db.rebuild_fts_index().await?;
         eprintln!("done");
         if args.query.is_empty() {
             return Ok(());
@@ -40,7 +40,7 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
 
     // Resolve filters
     let session_id = if let Some(ref s) = args.session {
-        let sessions = db.meta.list_sessions(None, 100)?;
+        let sessions = db.list_sessions(None, 100).await?;
         cmd::resolve_session(&sessions, Some(s))
     } else {
         None
@@ -78,7 +78,7 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
         let query_text = args.query.join(" ");
         let query_vec = embedder.embed_query(&query_text)?;
 
-        let results = db.events.search_vector(
+        let results = db.search_vector(
             &query_vec,
             &event_types,
             session_id.as_deref(),
@@ -96,7 +96,6 @@ pub async fn run(args: &SearchArgs, db: &Database) -> anyhow::Result<()> {
 
     // Execute FTS search (auto-rebuilds stale index on first failure)
     let results = db
-        .events
         .search_fts(
             &query,
             &event_types,

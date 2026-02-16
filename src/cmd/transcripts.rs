@@ -12,10 +12,10 @@ const ZSTD_COMPRESSION_LEVEL: i32 = 19;
 pub async fn run(command: &TranscriptsCommand, db: &Database) -> anyhow::Result<()> {
     match command {
         TranscriptsCommand::Sync => cmd_sync(db).await,
-        TranscriptsCommand::List(args) => cmd_list(args, db),
-        TranscriptsCommand::Show { session_id } => cmd_show(session_id, db),
+        TranscriptsCommand::List(args) => cmd_list(args, db).await,
+        TranscriptsCommand::Show { session_id } => cmd_show(session_id, db).await,
         TranscriptsCommand::Extract(args) => cmd_extract(args, db).await,
-        TranscriptsCommand::Stats => cmd_stats(db),
+        TranscriptsCommand::Stats => cmd_stats(db).await,
     }
 }
 
@@ -50,7 +50,7 @@ async fn cmd_sync(db: &Database) -> anyhow::Result<()> {
     );
 
     // Get existing archived sessions for change detection
-    let archived = db.meta.get_archived_session_ids()?;
+    let archived = db.get_archived_session_ids().await?;
     let archived_lookup: std::collections::HashMap<&str, i64> =
         archived.iter().map(|(sid, size)| (sid.as_str(), *size)).collect();
 
@@ -74,7 +74,7 @@ async fn cmd_sync(db: &Database) -> anyhow::Result<()> {
         // Extract metadata from first JSONL line
         let metadata = extract_metadata(&t.path);
 
-        let is_new = db.meta.upsert_transcript(
+        let is_new = db.upsert_transcript(
             &t.session_id,
             &compressed,
             t.size_bytes,
@@ -82,7 +82,7 @@ async fn cmd_sync(db: &Database) -> anyhow::Result<()> {
             Some(&t.path.to_string_lossy()),
             t.parent_session_id.as_deref(),
             metadata.as_deref(),
-        )?;
+        ).await?;
 
         if is_new {
             new_count += 1;
@@ -104,8 +104,8 @@ async fn cmd_sync(db: &Database) -> anyhow::Result<()> {
 }
 
 /// List archived transcripts.
-fn cmd_list(args: &TranscriptsListArgs, db: &Database) -> anyhow::Result<()> {
-    let transcripts = db.meta.list_transcripts(args.subagents, args.limit)?;
+async fn cmd_list(args: &TranscriptsListArgs, db: &Database) -> anyhow::Result<()> {
+    let transcripts = db.list_transcripts(args.subagents, args.limit).await?;
 
     if transcripts.is_empty() {
         println!("No archived transcripts");
@@ -133,9 +133,9 @@ fn cmd_list(args: &TranscriptsListArgs, db: &Database) -> anyhow::Result<()> {
 }
 
 /// Show decompressed transcript content.
-fn cmd_show(session_id: &str, db: &Database) -> anyhow::Result<()> {
+async fn cmd_show(session_id: &str, db: &Database) -> anyhow::Result<()> {
     // Find by prefix match
-    let transcripts = db.meta.list_transcripts(true, 1000)?;
+    let transcripts = db.list_transcripts(true, 1000).await?;
     let matches: Vec<_> = transcripts
         .iter()
         .filter(|t| t.session_id.starts_with(session_id))
@@ -154,7 +154,7 @@ fn cmd_show(session_id: &str, db: &Database) -> anyhow::Result<()> {
     }
 
     let sid = &matches[0].session_id;
-    let compressed = db.meta.get_transcript_content(sid)?;
+    let compressed = db.get_transcript_content(sid).await?;
     match compressed {
         Some(data) => {
             let decompressed = zstd::decode_all(data.as_slice())?;
@@ -200,7 +200,7 @@ async fn cmd_extract(args: &TranscriptsExtractArgs, db: &Database) -> anyhow::Re
         println!("  Scanned: {} entries", result.entries_scanned);
         println!("  Created: {} events", result.events_created);
         if result.events_created > 0 {
-            db.events.compact().await?;
+            db.compact().await?;
         }
         if !result.errors.is_empty() {
             for err in &result.errors {
@@ -211,7 +211,7 @@ async fn cmd_extract(args: &TranscriptsExtractArgs, db: &Database) -> anyhow::Re
     }
 
     // Batch extraction from archived transcripts
-    let transcripts = db.meta.list_transcripts(true, 10000)?;
+    let transcripts = db.list_transcripts(true, 10000).await?;
     if transcripts.is_empty() {
         println!("No archived transcripts. Run: reclaude transcripts sync");
         return Ok(());
@@ -270,7 +270,7 @@ async fn cmd_extract(args: &TranscriptsExtractArgs, db: &Database) -> anyhow::Re
 
     if total_events > 0 {
         eprintln!("Optimizing database...");
-        db.events.compact().await?;
+        db.compact().await?;
     }
 
     println!("Extraction complete:");
@@ -284,8 +284,8 @@ async fn cmd_extract(args: &TranscriptsExtractArgs, db: &Database) -> anyhow::Re
 }
 
 /// Show transcript archive statistics.
-fn cmd_stats(db: &Database) -> anyhow::Result<()> {
-    let stats = db.meta.get_transcript_stats()?;
+async fn cmd_stats(db: &Database) -> anyhow::Result<()> {
+    let stats = db.get_transcript_stats().await?;
 
     if stats.total == 0 {
         println!("No archived transcripts");

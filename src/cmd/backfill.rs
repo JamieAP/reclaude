@@ -76,7 +76,7 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
         eprintln!("    {CYAN}{et:25}{RESET} {count:>8}");
     }
 
-    let existing = db.events.count().await?;
+    let existing = db.count().await?;
     eprintln!("\n  {DIM}Current events:{RESET} {existing}");
 
     if args.dry_run {
@@ -90,7 +90,7 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
     eprint!("  Recreating events table... ");
-    db.events.recreate_table().await?;
+    db.recreate_table().await?;
     eprintln!("{GREEN}done{RESET}");
 
     // 2. Read all events from legacy DB and insert in batches
@@ -174,7 +174,7 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
         }
 
         let count = events.len();
-        db.events.bulk_insert(&events).await?;
+        db.bulk_insert(&events).await?;
         inserted += count;
         offset += count;
 
@@ -188,27 +188,27 @@ pub async fn run(args: &BackfillArgs, db: &Database) -> anyhow::Result<()> {
 
     // 3. Optimize FTS index (merge b-tree segments after bulk insert)
     eprint!("  Optimizing FTS index... ");
-    db.events.optimize_fts().await?;
+    db.optimize_fts().await?;
     eprintln!("{GREEN}done{RESET}");
 
     // 4. Upsert sessions into metadata DB
     eprint!("  Syncing sessions... ");
     let mut session_count = 0;
     for (sid, (ts, cwd, repo_name, remote_url, branch)) in &session_map {
-        let _ = db.meta.upsert_session(
+        let _ = db.upsert_session(
             sid,
             ts,
             cwd.as_deref(),
             repo_name.as_deref(),
             remote_url.as_deref(),
             branch.as_deref(),
-        );
+        ).await;
         session_count += 1;
     }
     eprintln!("{GREEN}{session_count} sessions{RESET}");
 
     // 5. Verify
-    let final_count = db.events.count().await?;
+    let final_count = db.count().await?;
     eprintln!("\n  {BOLD}Backfill complete{RESET}");
     eprintln!("  {DIM}Events:{RESET} {GREEN}{final_count}{RESET}");
 

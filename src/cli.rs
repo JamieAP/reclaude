@@ -518,13 +518,13 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<()> {
             let cwd = std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let tag = db.meta.tag_session(&cwd)?;
+            let tag = db.tag_session(&cwd).await?;
             println!("{tag}");
             Ok(())
         }
         Commands::GetSession(ref args) => {
             let db = crate::db::Database::open().await?;
-            match db.meta.get_session_by_tag(&args.tag)? {
+            match db.get_session_by_tag(&args.tag).await? {
                 Some(sid) => println!("{sid}"),
                 None => {
                     if !args.quiet {

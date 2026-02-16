@@ -132,7 +132,6 @@ async fn synthesize_window(
     let until = end.to_rfc3339();
 
     let events = db
-        .events
         .query_range(&[], None, None, Some(&since), Some(&until), 50_000)
         .await?;
 
@@ -165,7 +164,6 @@ async fn synthesize_window(
 
     // First half
     let events1 = db
-        .events
         .query_range(&[], None, None, Some(&since_half), Some(&mid_str), 50_000)
         .await?;
     if !events1.is_empty() {
@@ -176,7 +174,6 @@ async fn synthesize_window(
 
     // Second half
     let events2 = db
-        .events
         .query_range(&[], None, None, Some(&mid_str), Some(&until_half), 50_000)
         .await?;
     if !events2.is_empty() {

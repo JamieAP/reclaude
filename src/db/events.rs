@@ -1,79 +1,13 @@
-use std::path::Path;
-use std::sync::Mutex;
-
 use rusqlite::Connection;
 use zerocopy::IntoBytes;
 
 use crate::models::Event;
 
-/// SQLite-backed event storage with FTS5 text search and sqlite-vec vector search.
-///
-/// All events stored in `~/.reclaude/metadata.db` alongside session metadata.
-/// FTS5 in external content mode with INSERT/DELETE/UPDATE triggers keeps
-/// the full-text index always in sync - no manual rebuilds needed.
-///
-/// `Mutex<Connection>` makes this `Send + Sync` for use in `Arc<AppState>`.
-pub struct EventStore {
-    conn: Mutex<Connection>,
-}
+use super::Database;
 
-impl Drop for EventStore {
-    fn drop(&mut self) {
-        if let Ok(conn) = self.conn.lock() {
-            let _ = conn.execute_batch("PRAGMA optimize");
-        }
-    }
-}
+// ── Event Methods ──────────────────────────────────────────────────
 
-/// Register sqlite-vec extension globally (once per process).
-fn init_sqlite_vec() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite_vec::sqlite3_vec_init as *const (),
-            )));
-        }
-    });
-}
-
-impl EventStore {
-    /// Open or create the event store in `base/metadata.db`.
-    pub fn open(base: &Path) -> anyhow::Result<Self> {
-        init_sqlite_vec();
-
-        let db_path = base.join("metadata.db");
-        let conn = Connection::open(&db_path)?;
-
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
-             PRAGMA synchronous = normal;
-             PRAGMA mmap_size = 268435456;
-             PRAGMA cache_size = -16000;",
-        )?;
-
-        let store = Self {
-            conn: Mutex::new(conn),
-        };
-        store.ensure_schema()?;
-
-        // Verify sqlite-vec is loaded
-        {
-            let conn = store.conn.lock().unwrap();
-            let _ver: String =
-                conn.query_row("SELECT vec_version()", [], |r| r.get(0))?;
-        }
-
-        Ok(store)
-    }
-
-    fn ensure_schema(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        create_schema(&conn)
-    }
-
+impl Database {
     /// Insert a single event, letting AUTOINCREMENT assign the ID.
     /// Returns the assigned row ID.
     pub async fn insert(&self, event: &Event) -> anyhow::Result<i64> {
@@ -417,14 +351,13 @@ impl EventStore {
         )?;
         create_schema(&conn)
     }
-
 }
 
 // ── Schema ─────────────────────────────────────────────────────────
 
 /// Create the events table, indexes, FTS5 virtual table, and sync triggers.
 /// Takes `&Connection` directly so callers can hold their lock.
-fn create_schema(conn: &Connection) -> anyhow::Result<()> {
+pub(crate) fn create_schema(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -540,12 +473,6 @@ fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<Event> {
     })
 }
 
-impl std::fmt::Debug for EventStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventStore").finish()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,36 +497,36 @@ mod tests {
         }
     }
 
-    fn open_store() -> (EventStore, TempDir) {
+    fn open_db() -> (Database, TempDir) {
         let dir = TempDir::new().unwrap();
-        let store = EventStore::open(dir.path()).unwrap();
-        (store, dir)
+        let db = Database::open_at(dir.path()).unwrap();
+        (db, dir)
     }
 
     #[tokio::test]
     async fn open_creates_schema_and_verifies_sqlite_vec() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         // If we got here, schema + sqlite-vec initialized successfully
-        assert_eq!(store.count().await.unwrap(), 0);
+        assert_eq!(db.count().await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn insert_assigns_autoincrement_id() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let event = test_event("user_prompt", "hello world");
-        let id1 = store.insert(&event).await.unwrap();
-        let id2 = store.insert(&event).await.unwrap();
+        let id1 = db.insert(&event).await.unwrap();
+        let id2 = db.insert(&event).await.unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
     }
 
     #[tokio::test]
     async fn insert_then_get_by_id_roundtrips() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let event = test_event("assistant", "I can help with that");
-        let id = store.insert(&event).await.unwrap();
+        let id = db.insert(&event).await.unwrap();
 
-        let retrieved = store.get_by_id(id).await.unwrap().unwrap();
+        let retrieved = db.get_by_id(id).await.unwrap().unwrap();
         assert_eq!(retrieved.id, id);
         assert_eq!(retrieved.event_type, "assistant");
         assert_eq!(retrieved.content, "I can help with that");
@@ -608,13 +535,13 @@ mod tests {
 
     #[tokio::test]
     async fn get_by_id_returns_none_for_missing() {
-        let (store, _dir) = open_store();
-        assert!(store.get_by_id(9999).await.unwrap().is_none());
+        let (db, _dir) = open_db();
+        assert!(db.get_by_id(9999).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn bulk_insert_with_explicit_ids() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let events: Vec<Event> = (1..=100)
             .map(|i| {
                 let mut e = test_event("tool_use", &format!("event {i}"));
@@ -623,74 +550,69 @@ mod tests {
             })
             .collect();
 
-        store.bulk_insert(&events).await.unwrap();
-        assert_eq!(store.count().await.unwrap(), 100);
+        db.bulk_insert(&events).await.unwrap();
+        assert_eq!(db.count().await.unwrap(), 100);
 
-        let e50 = store.get_by_id(50).await.unwrap().unwrap();
+        let e50 = db.get_by_id(50).await.unwrap().unwrap();
         assert_eq!(e50.content, "event 50");
     }
 
     #[tokio::test]
     async fn bulk_insert_empty_is_noop() {
-        let (store, _dir) = open_store();
-        store.bulk_insert(&[]).await.unwrap();
-        assert_eq!(store.count().await.unwrap(), 0);
+        let (db, _dir) = open_db();
+        db.bulk_insert(&[]).await.unwrap();
+        assert_eq!(db.count().await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn count_and_counts_by_type() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         for content in ["a", "b", "c"] {
-            store
-                .insert(&test_event("user_prompt", content))
+            db.insert(&test_event("user_prompt", content))
                 .await
                 .unwrap();
         }
-        store
-            .insert(&test_event("assistant", "reply"))
+        db.insert(&test_event("assistant", "reply"))
             .await
             .unwrap();
 
-        assert_eq!(store.count().await.unwrap(), 4);
+        assert_eq!(db.count().await.unwrap(), 4);
 
-        let counts = store.counts_by_type().await.unwrap();
+        let counts = db.counts_by_type().await.unwrap();
         assert_eq!(counts[0], ("user_prompt".to_string(), 3));
         assert_eq!(counts[1], ("assistant".to_string(), 1));
     }
 
     #[tokio::test]
     async fn query_filters_by_event_type() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("user_prompt", "q1"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("user_prompt", "q1"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("assistant", "a1"))
+        db.insert(&test_event("assistant", "a1"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("user_prompt", "q2"))
+        db.insert(&test_event("user_prompt", "q2"))
             .await
             .unwrap();
 
-        let prompts = store.query(&["user_prompt"], None, None, 10).await.unwrap();
+        let prompts = db.query(&["user_prompt"], None, None, 10).await.unwrap();
         assert_eq!(prompts.len(), 2);
         assert!(prompts.iter().all(|e| e.event_type == "user_prompt"));
     }
 
     #[tokio::test]
     async fn query_filters_by_session_id() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let mut e1 = test_event("assistant", "from session 1");
         e1.session_id = Some("sess-001".to_string());
         let mut e2 = test_event("assistant", "from session 2");
         e2.session_id = Some("sess-002".to_string());
 
-        store.insert(&e1).await.unwrap();
-        store.insert(&e2).await.unwrap();
+        db.insert(&e1).await.unwrap();
+        db.insert(&e2).await.unwrap();
 
-        let results = store
+        let results = db
             .query(&[], Some("sess-002"), None, 10)
             .await
             .unwrap();
@@ -700,16 +622,16 @@ mod tests {
 
     #[tokio::test]
     async fn query_filters_by_cwd_prefix() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let mut e1 = test_event("assistant", "in project");
         e1.cwd = Some("/home/user/project".to_string());
         let mut e2 = test_event("assistant", "in other");
         e2.cwd = Some("/home/user/other".to_string());
 
-        store.insert(&e1).await.unwrap();
-        store.insert(&e2).await.unwrap();
+        db.insert(&e1).await.unwrap();
+        db.insert(&e2).await.unwrap();
 
-        let results = store
+        let results = db
             .query(&[], None, Some("/home/user/project"), 10)
             .await
             .unwrap();
@@ -719,17 +641,17 @@ mod tests {
 
     #[tokio::test]
     async fn query_returns_timestamp_desc_order() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         for (i, ts) in ["2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", "2026-01-02T00:00:00Z"]
             .iter()
             .enumerate()
         {
             let mut e = test_event("assistant", &format!("event {i}"));
             e.timestamp = ts.to_string();
-            store.insert(&e).await.unwrap();
+            db.insert(&e).await.unwrap();
         }
 
-        let results = store.query(&[], None, None, 10).await.unwrap();
+        let results = db.query(&[], None, None, 10).await.unwrap();
         assert_eq!(results[0].timestamp, "2026-01-03T00:00:00Z");
         assert_eq!(results[1].timestamp, "2026-01-02T00:00:00Z");
         assert_eq!(results[2].timestamp, "2026-01-01T00:00:00Z");
@@ -737,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_range_filters_by_time() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         for ts in [
             "2026-01-01T00:00:00Z",
             "2026-01-15T00:00:00Z",
@@ -745,10 +667,10 @@ mod tests {
         ] {
             let mut e = test_event("assistant", ts);
             e.timestamp = ts.to_string();
-            store.insert(&e).await.unwrap();
+            db.insert(&e).await.unwrap();
         }
 
-        let results = store
+        let results = db
             .query_range(
                 &[],
                 None,
@@ -767,15 +689,14 @@ mod tests {
 
     #[tokio::test]
     async fn fts_immediately_searchable_after_insert() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         // This is THE test - FTS triggers ensure immediate searchability.
-        store
-            .insert(&test_event("user_prompt", "implement authentication middleware"))
+        db.insert(&test_event("user_prompt", "implement authentication middleware"))
             .await
             .unwrap();
 
         // Immediately search - no rebuild needed
-        let results = store
+        let results = db
             .search_fts("authentication", &[], None, None, 10)
             .await
             .unwrap();
@@ -785,21 +706,21 @@ mod tests {
 
     #[tokio::test]
     async fn fts_respects_filters() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         let mut e1 = test_event("user_prompt", "fix the login bug");
         e1.session_id = Some("sess-A".to_string());
         let mut e2 = test_event("assistant", "the login bug is in auth.rs");
         e2.session_id = Some("sess-B".to_string());
 
-        store.insert(&e1).await.unwrap();
-        store.insert(&e2).await.unwrap();
+        db.insert(&e1).await.unwrap();
+        db.insert(&e2).await.unwrap();
 
         // Both match "login"
-        let all = store.search_fts("login", &[], None, None, 10).await.unwrap();
+        let all = db.search_fts("login", &[], None, None, 10).await.unwrap();
         assert_eq!(all.len(), 2);
 
         // Filter by type
-        let prompts_only = store
+        let prompts_only = db
             .search_fts("login", &["user_prompt"], None, None, 10)
             .await
             .unwrap();
@@ -807,7 +728,7 @@ mod tests {
         assert_eq!(prompts_only[0].event_type, "user_prompt");
 
         // Filter by session
-        let sess_b = store
+        let sess_b = db
             .search_fts("login", &[], Some("sess-B"), None, 10)
             .await
             .unwrap();
@@ -817,14 +738,13 @@ mod tests {
 
     #[tokio::test]
     async fn fts_porter_stemming_matches_word_variants() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("assistant", "implementing the feature"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("assistant", "implementing the feature"))
             .await
             .unwrap();
 
         // Porter stemmer: "implement" should match "implementing"
-        let results = store
+        let results = db
             .search_fts("implement", &[], None, None, 10)
             .await
             .unwrap();
@@ -833,13 +753,12 @@ mod tests {
 
     #[tokio::test]
     async fn fts_no_results_for_nonexistent_term() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("assistant", "hello world"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("assistant", "hello world"))
             .await
             .unwrap();
 
-        let results = store
+        let results = db
             .search_fts("xyzzy_nonexistent", &[], None, None, 10)
             .await
             .unwrap();
@@ -848,15 +767,14 @@ mod tests {
 
     #[tokio::test]
     async fn rebuild_fts_index_keeps_data_searchable() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("assistant", "important data"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("assistant", "important data"))
             .await
             .unwrap();
 
-        store.rebuild_fts_index().await.unwrap();
+        db.rebuild_fts_index().await.unwrap();
 
-        let results = store
+        let results = db
             .search_fts("important", &[], None, None, 10)
             .await
             .unwrap();
@@ -867,7 +785,7 @@ mod tests {
 
     #[tokio::test]
     async fn vector_search_finds_nearest() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
 
         // Insert events with known vectors
         let mut e1 = test_event("assistant", "about rust");
@@ -877,12 +795,12 @@ mod tests {
         let mut e3 = test_event("assistant", "also about rust");
         e3.vector = Some(vec![0.9, 0.1, 0.0]);
 
-        store.insert(&e1).await.unwrap();
-        store.insert(&e2).await.unwrap();
-        store.insert(&e3).await.unwrap();
+        db.insert(&e1).await.unwrap();
+        db.insert(&e2).await.unwrap();
+        db.insert(&e3).await.unwrap();
 
         // Query vector closest to [1, 0, 0] - should return "about rust" first
-        let results = store
+        let results = db
             .search_vector(&[1.0, 0.0, 0.0], &[], None, None, 2)
             .await
             .unwrap();
@@ -893,16 +811,16 @@ mod tests {
 
     #[tokio::test]
     async fn vector_search_skips_null_vectors() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
 
         let mut with_vec = test_event("assistant", "has embedding");
         with_vec.vector = Some(vec![1.0, 0.0, 0.0]);
         let without_vec = test_event("assistant", "no embedding");
 
-        store.insert(&with_vec).await.unwrap();
-        store.insert(&without_vec).await.unwrap();
+        db.insert(&with_vec).await.unwrap();
+        db.insert(&without_vec).await.unwrap();
 
-        let results = store
+        let results = db
             .search_vector(&[1.0, 0.0, 0.0], &[], None, None, 10)
             .await
             .unwrap();
@@ -914,62 +832,57 @@ mod tests {
 
     #[tokio::test]
     async fn query_unembedded_returns_embeddable_types_only() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("user_prompt", "should embed"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("user_prompt", "should embed"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("tool_use", "should NOT embed"))
+        db.insert(&test_event("tool_use", "should NOT embed"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("assistant", "should embed too"))
+        db.insert(&test_event("assistant", "should embed too"))
             .await
             .unwrap();
 
-        let unembedded = store.query_unembedded(100).await.unwrap();
+        let unembedded = db.query_unembedded(100).await.unwrap();
         assert_eq!(unembedded.len(), 2);
         assert!(unembedded.iter().all(|e| e.event_type != "tool_use"));
     }
 
     #[tokio::test]
     async fn update_vector_then_no_longer_unembedded() {
-        let (store, _dir) = open_store();
-        let id = store
+        let (db, _dir) = open_db();
+        let id = db
             .insert(&test_event("user_prompt", "embed me"))
             .await
             .unwrap();
 
-        assert_eq!(store.query_unembedded(100).await.unwrap().len(), 1);
+        assert_eq!(db.query_unembedded(100).await.unwrap().len(), 1);
 
-        store.update_vector(id, &[0.1, 0.2, 0.3]).await.unwrap();
+        db.update_vector(id, &[0.1, 0.2, 0.3]).await.unwrap();
 
-        assert_eq!(store.query_unembedded(100).await.unwrap().len(), 0);
+        assert_eq!(db.query_unembedded(100).await.unwrap().len(), 0);
     }
 
     // ── Table Lifecycle Tests ───────────────────────────────────────
 
     #[tokio::test]
     async fn recreate_table_drops_all_data() {
-        let (store, _dir) = open_store();
+        let (db, _dir) = open_db();
         for i in 0..10 {
-            store
-                .insert(&test_event("assistant", &format!("event {i}")))
+            db.insert(&test_event("assistant", &format!("event {i}")))
                 .await
                 .unwrap();
         }
-        assert_eq!(store.count().await.unwrap(), 10);
+        assert_eq!(db.count().await.unwrap(), 10);
 
-        store.recreate_table().await.unwrap();
-        assert_eq!(store.count().await.unwrap(), 0);
+        db.recreate_table().await.unwrap();
+        assert_eq!(db.count().await.unwrap(), 0);
 
         // FTS still works after recreate
-        store
-            .insert(&test_event("assistant", "fresh start"))
+        db.insert(&test_event("assistant", "fresh start"))
             .await
             .unwrap();
-        let results = store
+        let results = db
             .search_fts("fresh", &[], None, None, 10)
             .await
             .unwrap();
@@ -978,33 +891,29 @@ mod tests {
 
     #[tokio::test]
     async fn compact_is_harmless_noop() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("assistant", "data"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("assistant", "data"))
             .await
             .unwrap();
         // Should not error or affect data
-        store.compact().await.unwrap();
-        assert_eq!(store.count().await.unwrap(), 1);
+        db.compact().await.unwrap();
+        assert_eq!(db.count().await.unwrap(), 1);
     }
 
     #[tokio::test]
     async fn query_with_multiple_event_types() {
-        let (store, _dir) = open_store();
-        store
-            .insert(&test_event("user_prompt", "q"))
+        let (db, _dir) = open_db();
+        db.insert(&test_event("user_prompt", "q"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("assistant", "a"))
+        db.insert(&test_event("assistant", "a"))
             .await
             .unwrap();
-        store
-            .insert(&test_event("tool_use", "t"))
+        db.insert(&test_event("tool_use", "t"))
             .await
             .unwrap();
 
-        let results = store
+        let results = db
             .query(&["user_prompt", "assistant"], None, None, 10)
             .await
             .unwrap();
@@ -1012,4 +921,3 @@ mod tests {
         assert!(results.iter().all(|e| e.event_type != "tool_use"));
     }
 }
-

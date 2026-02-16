@@ -11,7 +11,7 @@ const FILE_TOOLS: &[&str] = &["Read", "Write", "Edit", "NotebookEdit"];
 pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
     // Resolve session filter
     let session_id = if let Some(ref s) = args.session {
-        let sessions = db.meta.list_sessions(None, 100)?;
+        let sessions = db.list_sessions(None, 100).await?;
         cmd::resolve_session(&sessions, Some(s))
     } else {
         None
@@ -26,7 +26,6 @@ pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
 
     // Query tool_use events
     let events = db
-        .events
         .query(
             &["tool_use"],
             session_id.as_deref(),

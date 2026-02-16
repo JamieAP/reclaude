@@ -538,17 +538,17 @@ pub async fn extract_from_bytes(
         );
 
         for event in events {
-            match db.events.insert(&event).await {
+            match db.insert(&event).await {
                 Ok(id) => {
                     if let Some(sid) = &event.session_id {
-                        let _ = db.meta.upsert_session(
+                        let _ = db.upsert_session(
                             sid,
                             &event.timestamp,
                             event.cwd.as_deref(),
                             event.repo_name.as_deref(),
                             event.remote_url.as_deref(),
                             event.branch.as_deref(),
-                        );
+                        ).await;
                     }
                     result.events_created += 1;
                     debug!(event_id = id, event_type = %event.event_type, "extracted");
@@ -563,12 +563,12 @@ pub async fn extract_from_bytes(
     }
 
     // Update scan state
-    db.meta.update_scan_state(
+    db.update_scan_state(
         transcript_path,
         data.len() as i64,
         last_uuid.as_deref(),
         result.events_created as i64,
-    )?;
+    ).await?;
 
     Ok(result)
 }
@@ -584,8 +584,8 @@ pub async fn extract_file(
     let start_offset = if force {
         0
     } else {
-        db.meta
-            .get_scan_state(&path_str)?
+        db.get_scan_state(&path_str)
+            .await?
             .map(|s| s.last_byte_offset as usize)
             .unwrap_or(0)
     };
@@ -600,7 +600,7 @@ pub async fn extract_archived(
     session_id: &str,
     db: &Database,
 ) -> anyhow::Result<Option<ExtractResult>> {
-    let compressed = match db.meta.get_transcript_content(session_id)? {
+    let compressed = match db.get_transcript_content(session_id).await? {
         Some(data) => data,
         None => return Ok(None),
     };
@@ -609,8 +609,8 @@ pub async fn extract_archived(
     let transcript_path = format!("archive:{session_id}");
 
     let start_offset = db
-        .meta
-        .get_scan_state(&transcript_path)?
+        .get_scan_state(&transcript_path)
+        .await?
         .map(|s| s.last_byte_offset as usize)
         .unwrap_or(0);
 
@@ -659,7 +659,7 @@ pub async fn sync_plans(db: &Database) -> anyhow::Result<()> {
 
         // Use scan state to track if already ingested (by file size)
         let file_size = std::fs::metadata(path)?.len() as i64;
-        if let Some(state) = db.meta.get_scan_state(&path_str)? {
+        if let Some(state) = db.get_scan_state(&path_str).await? {
             if state.last_byte_offset == file_size {
                 skipped += 1;
                 continue;
@@ -703,9 +703,8 @@ pub async fn sync_plans(db: &Database) -> anyhow::Result<()> {
             vector: None,
         };
 
-        db.events.insert(&event).await?;
-        db.meta
-            .update_scan_state(&path_str, file_size, None, 1)?;
+        db.insert(&event).await?;
+        db.update_scan_state(&path_str, file_size, None, 1).await?;
         created += 1;
     }
 

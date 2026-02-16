@@ -33,7 +33,7 @@ fn cmd_status() -> anyhow::Result<()> {
 }
 
 async fn cmd_backfill(limit: usize, dry_run: bool, db: &Database) -> anyhow::Result<()> {
-    let events = db.events.query_unembedded(limit).await?;
+    let events = db.query_unembedded(limit).await?;
 
     if events.is_empty() {
         println!("No unembedded events found.");
@@ -71,14 +71,14 @@ async fn cmd_backfill(limit: usize, dry_run: bool, db: &Database) -> anyhow::Res
         }
 
         if batch.len() >= 500 {
-            db.events.update_vectors_batch(&batch).await?;
+            db.update_vectors_batch(&batch).await?;
             batch.clear();
         }
     }
 
     // Flush remaining
     if !batch.is_empty() {
-        db.events.update_vectors_batch(&batch).await?;
+        db.update_vectors_batch(&batch).await?;
     }
     eprintln!();
 

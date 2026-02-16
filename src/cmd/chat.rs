@@ -27,13 +27,13 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
 
     let events = if show_all {
         // All chat events across every session and repo
-        db.events.query(CHAT_TYPES, None, None, effective_limit).await?
+        db.query(CHAT_TYPES, None, None, effective_limit).await?
     } else if let Some(ref session_arg) = args.session {
-        let sessions = db.meta.list_sessions(None, 100)?;
+        let sessions = db.list_sessions(None, 100).await?;
         let session_id = cmd::resolve_session(&sessions, Some(session_arg));
         match session_id {
             Some(sid) => {
-                db.events
+                db
                     .query(CHAT_TYPES, Some(&sid), None, effective_limit)
                     .await?
             }
@@ -41,11 +41,11 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
         }
     } else if let Some(event_id) = args.event_id {
         // Find the event, then get its session
-        let target = db.events.get_by_id(event_id).await?;
+        let target = db.get_by_id(event_id).await?;
         match target {
             Some(e) => {
                 if let Some(ref sid) = e.session_id {
-                    db.events
+                    db
                         .query(CHAT_TYPES, Some(sid), None, effective_limit)
                         .await?
                 } else {
@@ -61,7 +61,7 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
     } else {
         // Default: all sessions in current cwd
         let cwd = cmd::current_dir();
-        db.events.query(CHAT_TYPES, None, Some(&cwd), effective_limit).await?
+        db.query(CHAT_TYPES, None, Some(&cwd), effective_limit).await?
     };
 
     if events.is_empty() {

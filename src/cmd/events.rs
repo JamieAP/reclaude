@@ -13,7 +13,7 @@ pub async fn run(args: &EventsArgs, db: &Database) -> anyhow::Result<()> {
 
     // Resolve session filter
     let session_id = if let Some(ref s) = args.session {
-        let sessions = db.meta.list_sessions(None, 100)?;
+        let sessions = db.list_sessions(None, 100).await?;
         cmd::resolve_session(&sessions, Some(s))
     } else {
         None
@@ -71,7 +71,6 @@ pub async fn run(args: &EventsArgs, db: &Database) -> anyhow::Result<()> {
     // Query events
     let db_type_refs: Vec<&str> = db_types.iter().map(|s| s.as_str()).collect();
     let events = db
-        .events
         .query(
             &db_type_refs,
             session_id.as_deref(),
@@ -129,7 +128,7 @@ pub async fn run(args: &EventsArgs, db: &Database) -> anyhow::Result<()> {
 }
 
 async fn show_single_event(id: i64, json: bool, db: &Database) -> anyhow::Result<()> {
-    let event = db.events.get_by_id(id).await?;
+    let event = db.get_by_id(id).await?;
     match event {
         Some(e) => {
             if json {

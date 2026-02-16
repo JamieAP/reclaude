@@ -6,7 +6,7 @@ use crate::fzf;
 /// List recent sessions with age, event count, and project info.
 pub async fn run(args: &SessionsArgs, db: &Database) -> anyhow::Result<()> {
     let cwd = if args.all { None } else { Some(cmd::current_dir()) };
-    let sessions = db.meta.list_sessions(cwd.as_deref(), args.limit)?;
+    let sessions = db.list_sessions(cwd.as_deref(), args.limit).await?;
 
     if sessions.is_empty() {
         eprintln!("No sessions found");

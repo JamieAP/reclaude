@@ -150,16 +150,16 @@ fn make_event(
 
 /// Insert event into the events table and upsert session metadata.
 async fn insert_and_upsert(db: &Database, event: &Event) -> anyhow::Result<i64> {
-    let id = db.events.insert(event).await?;
+    let id = db.insert(event).await?;
     if let Some(sid) = &event.session_id {
-        db.meta.upsert_session(
+        db.upsert_session(
             sid,
             &event.timestamp,
             event.cwd.as_deref(),
             event.repo_name.as_deref(),
             event.remote_url.as_deref(),
             event.branch.as_deref(),
-        )?;
+        ).await?;
     }
     Ok(id)
 }
@@ -1138,7 +1138,7 @@ async fn capture_session_end(payload: &Value, db: &Database) -> anyhow::Result<(
     let id = insert_and_upsert(db, &event).await?;
 
     // Also mark session inactive in SQLite
-    db.meta.end_session(&session_id, &event.timestamp)?;
+    db.end_session(&session_id, &event.timestamp).await?;
 
     info!(event_id = id, %reason, "session_end");
     Ok(())
