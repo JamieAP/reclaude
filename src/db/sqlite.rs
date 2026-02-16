@@ -188,17 +188,52 @@ impl MetadataDb {
     }
 
     /// Look up a session ID by its tag.
+    /// Resolves lazily: if session_id is NULL, finds the most recent event
+    /// matching the tag's cwd before the tag timestamp, then caches the result.
     pub fn get_session_by_tag(&self, tag: &str) -> anyhow::Result<Option<String>> {
-        let result = self.conn.query_row(
-            "SELECT session_id FROM session_tags WHERE tag = ?1",
+        let row = self.conn.query_row(
+            "SELECT session_id, created_at, cwd FROM session_tags WHERE tag = ?1",
             [tag],
-            |row| row.get::<_, Option<String>>(0),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         );
-        match result {
-            Ok(sid) => Ok(sid),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
+        let (cached_sid, created_at, cwd) = match row {
+            Ok(r) => r,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        // Already resolved
+        if cached_sid.is_some() {
+            return Ok(cached_sid);
         }
+
+        // Lazy resolve: find session with most recent event in this cwd before tag creation
+        let resolved: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT session_id FROM events
+                 WHERE cwd = ?1 AND timestamp <= ?2 AND session_id IS NOT NULL
+                 ORDER BY timestamp DESC LIMIT 1",
+                rusqlite::params![cwd, created_at],
+                |row| row.get(0),
+            )
+            .ok();
+
+        // Cache for future lookups
+        if let Some(ref sid) = resolved {
+            let _ = self.conn.execute(
+                "UPDATE session_tags SET session_id = ?1 WHERE tag = ?2",
+                rusqlite::params![sid, tag],
+            );
+        }
+
+        Ok(resolved)
     }
 
     // ── Transcript Operations ───────────────────────────────────────

@@ -231,7 +231,7 @@ impl EventStore {
 
         append_filters_prefixed(&mut sql, &mut params, event_types, session_id, cwd, "es");
 
-        sql.push_str(" ORDER BY fts.rank");
+        sql.push_str(" ORDER BY es.timestamp DESC");
         if limit > 0 {
             sql.push_str(" LIMIT ?");
             params.push(Box::new(limit as i64));
@@ -287,6 +287,8 @@ impl EventStore {
         for row in rows {
             events.push(row?);
         }
+        // Sort top-N results by timestamp (descending) for consistent display
+        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(events)
     }
 
