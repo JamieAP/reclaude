@@ -9,12 +9,14 @@ description: Use when confused about prior work, missing context, picking up a t
 
 ## Session Start Drill
 
-Run this when picking up work or starting a session in a project with prior history:
+Run this when picking up work or starting a session:
 
 ```bash
+reclaude recap                     # 24h activity: dirs, sessions, subagent trees, prompts
 reclaude events -n 10              # what happened recently in this project?
-reclaude sessions -n 5             # recent sessions here
 ```
+
+`recap` defaults to a 24h zoom across all repos - directories touched (with file counts and edit counts), session trees showing subagent spawns, and recent prompts. Use `recap 2h` or `recap 7d` to change window. Use `recap --overview` for the compact multi-bucket view.
 
 If the user mentions prior work, search for it before acting.
 
@@ -22,11 +24,11 @@ If the user mentions prior work, search for it before acting.
 
 Context recovery is a funnel: **search → find event → replay conversation**.
 
-**1. Search** - find relevant events:
+**1. Search** - find relevant events (scoped to cwd by default, add `--all` to widen):
 ```bash
-reclaude search "migration" --all          # FTS: exact keywords
-reclaude search --semantic "why we chose sqlite" --all  # vector: conceptual match
-reclaude search "schema" -t diff --all     # scoped to diffs only
+reclaude search "migration"                # FTS: current project
+reclaude search --semantic "why we chose sqlite"  # vector: conceptual match
+reclaude search "schema" -t diff           # scoped to diffs only
 ```
 
 **2. Identify** - note the event ID from search results (leftmost column).
@@ -43,10 +45,12 @@ This is how you recover *decisions*, not just *facts*. The conversation shows re
 
 | Question | Command |
 |----------|---------|
-| What changed in a file? | `reclaude search "filename" -t diff --all` |
-| What was decided? | `reclaude search --semantic "decision about X" --all` |
-| Who touched this file? | `reclaude files "path/to/file" --all` |
+| What changed in a file? | `reclaude search "filename" -t diff` |
+| What was decided? | `reclaude search --semantic "decision about X"` |
+| Who touched this file? | `reclaude files "path/to/file"` |
+| Markdown files by recency? | `reclaude files -e md --all` |
 | What did we do last session? | `reclaude events -s <prefix> --full` |
+| Cross-project history? | Add `--all` to any of the above |
 | Lost after compaction? | `reclaude chat --fzf` |
 
 ## Key Flags
@@ -57,12 +61,24 @@ All subcommands support `--help` for full flag reference. The critical ones:
 - `-t <type>` - filter: `prompt`, `diff`, `plan`, `tool`, `compaction`
 - `--semantic` - vector similarity search (conceptual, not keyword)
 - `--fzf` - interactive browser with preview
+- `-e <ext>` - filter files by extension (e.g. `-e md`, `-e rs`)
 - `--full` - no content truncation
 - `-s <prefix>` - filter by session ID prefix
 
+## Scoping: Time > Location
+
+Recent events are almost always more relevant. `--all` FTS over many events will surface textually similar but unrelated results from other projects and months.
+
+**Scope narrowly first, widen only if needed:**
+1. Default (no `--all`) - current cwd only
+2. Add `-s <session_prefix>` - specific session
+3. Add `--all` - only when you need cross-project history
+
+Use `recap` to know which time periods and repos are relevant *before* searching.
+
 ## Anti-Patterns
 
-- **Don't guess** what happened last session - `reclaude events -n 10`
+- **Don't guess** what happened last session - `reclaude recap` then search
+- **Don't `--all` by default** - start scoped, widen if needed
 - **Don't ask the user** "what were we working on?" - search first
 - **Don't re-derive** a decision already made - search for it
-- **Don't repeat** `--help` output as context - just run the command

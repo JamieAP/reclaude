@@ -11,9 +11,7 @@ The user wants to install the `reclaude` CLI so they can run commands like `recl
 Build and install the release binary:
 
 ```bash
-cd /path/to/reclaude
-cargo build --release
-cp target/release/reclaude ~/.local/bin/reclaude
+CARGO_INSTALL_ROOT=~/.local cargo install --path /path/to/reclaude --force
 ```
 
 Ensure `~/.local/bin` is on your PATH.

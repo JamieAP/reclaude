@@ -4,6 +4,7 @@ pub mod embed;
 pub mod events;
 pub mod files;
 pub mod focus;
+pub mod recap;
 pub mod search;
 pub mod sessions;
 pub mod status;

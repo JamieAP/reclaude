@@ -37,6 +37,9 @@ pub enum Commands {
     /// Find files touched by Claude
     Files(FilesArgs),
 
+    /// Time-bucketed activity summary across repos
+    Recap(RecapArgs),
+
     /// Synthesize focus summary via Gemini
     Focus(FocusArgs),
 
@@ -270,6 +273,10 @@ pub struct FilesArgs {
     /// Filter by file path substring
     pub pattern: Option<String>,
 
+    /// Filter by file extension (e.g. md, rs, tsx)
+    #[arg(short, long)]
+    pub ext: Option<String>,
+
     /// Filter by session ID (prefix match)
     #[arg(short, long)]
     pub session: Option<String>,
@@ -297,6 +304,31 @@ pub struct FilesArgs {
     /// Stream paths live, poll for new (Ctrl+C to stop)
     #[arg(long)]
     pub stream: bool,
+}
+
+// ── Recap ───────────────────────────────────────────────────────────
+
+#[derive(clap::Args)]
+pub struct RecapArgs {
+    /// Time window: 2h, 24h, 7d (default: 24h)
+    #[arg(default_value = "24h")]
+    pub zoom: String,
+
+    /// Show multi-bucket overview instead of zoomed detail
+    #[arg(long)]
+    pub overview: bool,
+
+    /// Minimum events to show a repo (default: 10)
+    #[arg(long, default_value = "10")]
+    pub min_events: usize,
+
+    /// Compact output (no file paths or prompts)
+    #[arg(long)]
+    pub compact: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 // ── Focus ───────────────────────────────────────────────────────────
@@ -476,6 +508,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Search(ref args) => {
             let db = crate::db::Database::open().await?;
             crate::cmd::search::run(args, &db).await
+        }
+        Commands::Recap(ref args) => {
+            let db = crate::db::Database::open().await?;
+            crate::cmd::recap::run(args, &db).await
         }
         Commands::Focus(ref args) => {
             let db = crate::db::Database::open().await?;

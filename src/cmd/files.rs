@@ -55,6 +55,14 @@ pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
             }
         }
 
+        // Apply extension filter
+        if let Some(ref ext) = args.ext {
+            let suffix = format!(".{ext}");
+            if !file_path.ends_with(&suffix) {
+                continue;
+            }
+        }
+
         let touch = file_touches.entry(file_path).or_insert_with(|| FileTouch {
             last_ts: event.timestamp.clone(),
             sessions: HashSet::new(),
