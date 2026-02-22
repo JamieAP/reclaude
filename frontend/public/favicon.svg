@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e94560"/>
+      <stop offset="100%" stop-color="#c850c0"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <!-- "re" ligature rendered as geometric paths -->
+  <!-- Circular arrow (re-capture / re-play motif) -->
+  <circle cx="64" cy="58" r="28" fill="none" stroke="url(#glow)" stroke-width="7" stroke-linecap="round" stroke-dasharray="140 36"/>
+  <!-- Arrow head on the circle -->
+  <polygon points="88,42 92,56 78,50" fill="#e94560"/>
+  <!-- Terminal cursor / underscore -->
+  <rect x="44" y="96" width="40" height="6" rx="3" fill="#e94560" opacity="0.9">
+    <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+</svg>

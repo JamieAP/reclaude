@@ -1,6 +1,6 @@
 import type { TimeRange } from '../../utils/dateUtils';
 
-type ViewMode = 'unified' | 'events' | 'learnings';
+type ViewMode = 'unified' | 'events';
 
 interface RepoFiltersProps {
   viewMode: ViewMode;
@@ -20,7 +20,6 @@ const EVENT_COLORS: Record<string, string> = {
   file_diff: 'var(--ctp-peach)',
   plan: 'var(--ctp-mauve)',
   compaction: 'var(--ctp-yellow)',
-  learning: 'var(--ctp-pink)',
   // Task management
   task_create: 'var(--ctp-green)',
   task_update: 'var(--ctp-yellow)',
@@ -48,7 +47,7 @@ export function RepoFilters({
       {/* View mode */}
       <div className="flex items-center gap-2">
         <span className="text-xs" style={{ color: 'var(--ctp-subtext0)' }}>View:</span>
-        {(['unified', 'events', 'learnings'] as const).map((mode) => (
+        {(['unified', 'events'] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => setViewMode(mode)}
@@ -58,7 +57,7 @@ export function RepoFilters({
               color: viewMode === mode ? 'var(--ctp-crust)' : 'var(--ctp-text)',
             }}
           >
-            {mode === 'unified' ? 'All' : mode === 'events' ? 'Events' : 'Learnings'}
+            {mode === 'unified' ? 'All' : 'Events'}
           </button>
         ))}
       </div>

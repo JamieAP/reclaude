@@ -1,18 +1,11 @@
 import type {
   SemanticEvent,
-  Learning,
-  LearningCreate,
   SessionInfo,
   Statistics,
   RepoInfo,
   FocusSnapshot,
   EventsQueryParams,
-  LearningsQueryParams,
-  LearningsAnalyticsParams,
   FocusQueryParams,
-  SemanticSearchRequest,
-  SemanticLearningResult,
-  LearningsAnalytics,
 } from './types';
 
 const API_BASE = '/api';
@@ -70,47 +63,6 @@ export async function getSessions(): Promise<SessionInfo[]> {
 
 export async function getSession(sessionId: string): Promise<SessionInfo> {
   return fetchJson(`${API_BASE}/sessions/${sessionId}`);
-}
-
-// Learnings
-export async function getLearnings(
-  params: LearningsQueryParams = {}
-): Promise<Learning[]> {
-  const query = buildQueryString(params as Record<string, unknown>);
-  return fetchJson(`${API_BASE}/learnings${query}`);
-}
-
-export async function createLearning(data: LearningCreate): Promise<Learning> {
-  return fetchJson(`${API_BASE}/learnings`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export async function semanticSearchLearnings(
-  request: SemanticSearchRequest
-): Promise<SemanticLearningResult[]> {
-  return fetchJson(`${API_BASE}/learnings/semantic/search`, {
-    method: 'POST',
-    body: JSON.stringify(request),
-  });
-}
-
-export async function findSimilarLearnings(
-  learningId: number,
-  limit?: number
-): Promise<SemanticLearningResult[]> {
-  const query = buildQueryString({ limit });
-  return fetchJson<SemanticLearningResult[]>(
-    `${API_BASE}/learnings/semantic/${learningId}/similar${query}`
-  );
-}
-
-export async function getLearningsAnalytics(
-  params: LearningsAnalyticsParams = {}
-): Promise<LearningsAnalytics> {
-  const query = buildQueryString(params as Record<string, unknown>);
-  return fetchJson(`${API_BASE}/learnings/analytics${query}`);
 }
 
 // Statistics
@@ -179,13 +131,6 @@ export const api = {
   sessions: {
     list: getSessions,
     get: getSession,
-  },
-  learnings: {
-    list: getLearnings,
-    create: createLearning,
-    semanticSearch: semanticSearchLearnings,
-    findSimilar: findSimilarLearnings,
-    getAnalytics: getLearningsAnalytics,
   },
   repos: {
     list: getRepos,

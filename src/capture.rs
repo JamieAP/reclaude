@@ -297,6 +297,23 @@ async fn capture_post_tool_use(payload: &Value, db: &Database) -> anyhow::Result
             db,
         )
         .await?;
+
+        // Capture plan files written via Write tool.
+        // Matches ~/.claude/plans/*.md and */docs/plans/*.md
+        if let Some(ref fp) = val_str(&tool_input, "file_path") {
+            if fp.ends_with(".md") && (fp.contains("/.claude/plans/") || fp.contains("/docs/plans/")) {
+                capture_plan_file_from_write(
+                    &tool_input,
+                    fp,
+                    session_id.as_deref(),
+                    cwd.as_deref(),
+                    transcript_path.as_deref(),
+                    &git,
+                    db,
+                )
+                .await?;
+            }
+        }
     }
 
     // ── Task semantic events ──────────────────────────────────────
@@ -535,6 +552,46 @@ async fn capture_write_diff(
         added = line_count,
         "capture_file_diff"
     );
+    Ok(())
+}
+
+/// Capture a plan file written via the Write tool.
+/// Creates a plan_file event with the full markdown content.
+async fn capture_plan_file_from_write(
+    tool_input: &Value,
+    file_path: &str,
+    session_id: Option<&str>,
+    cwd: Option<&str>,
+    transcript_path: Option<&str>,
+    git: &GitContext,
+    db: &Database,
+) -> anyhow::Result<()> {
+    let content = val_str(tool_input, "content").unwrap_or_default();
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+
+    let metadata = json!({
+        "source": "write_hook",
+        "file_path": file_path,
+        "transcript_path": transcript_path,
+    });
+
+    let vector = try_embed(&EventType::PlanFile, &content);
+    let event = make_event(
+        EventType::PlanFile,
+        &content,
+        session_id,
+        cwd,
+        git,
+        None,
+        Some(file_path),
+        metadata,
+        vector,
+    );
+
+    let id = insert_and_upsert(db, &event).await?;
+    info!(event_id = id, file = %file_path, chars = content.len(), "capture_plan_file");
     Ok(())
 }
 
@@ -1250,6 +1307,41 @@ async fn capture_pre_tool_use(payload: &Value, db: &Database) -> anyhow::Result<
 
     let id = insert_and_upsert(db, &event).await?;
     info!(event_id = id, %tool_name, "pre_tool_use");
+
+    // ExitPlanMode: extract plan content and create a plan_file event.
+    // PostToolUse sees empty {} for this tool, so PreToolUse is the only
+    // reliable hook where the full plan markdown is available.
+    if tool_name == "ExitPlanMode" {
+        if let Some(plan_content) = payload
+            .get("tool_input")
+            .and_then(|v| v.get("plan"))
+            .and_then(|v| v.as_str())
+        {
+            if !plan_content.trim().is_empty() {
+                let plan_metadata = json!({
+                    "source": "exit_plan_mode",
+                    "transcript_path": val_str(payload, "transcript_path"),
+                });
+
+                let vector = try_embed(&EventType::PlanFile, plan_content);
+                let plan_event = make_event(
+                    EventType::PlanFile,
+                    plan_content,
+                    Some(&session_id),
+                    cwd.as_deref(),
+                    &git,
+                    None,
+                    None,
+                    plan_metadata,
+                    vector,
+                );
+
+                let plan_id = insert_and_upsert(db, &plan_event).await?;
+                info!(event_id = plan_id, chars = plan_content.len(), "capture_plan_file");
+            }
+        }
+    }
+
     Ok(())
 }
 

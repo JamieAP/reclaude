@@ -1,13 +1,12 @@
 import { useRef, useState, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { TimelineEntry, SemanticEvent, Learning } from '../api';
+import type { SemanticEvent } from '../api';
 import { formatDate } from '../utils/formatUtils';
 import { getEventTypeColor } from '../utils/eventTypeColors';
 import { EventDetailModal } from './EventDetailModal';
 
 interface UnifiedTimelineProps {
   events: SemanticEvent[];
-  learnings: Learning[];
   hasMore?: boolean;
   onLoadMore?: () => void;
 }
@@ -77,24 +76,18 @@ function getEventPreview(event: SemanticEvent): string {
 
 export function UnifiedTimeline({
   events,
-  learnings,
   hasMore,
   onLoadMore,
 }: UnifiedTimelineProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedEvent, setSelectedEvent] = useState<SemanticEvent | null>(null);
-  const [selectedLearning, setSelectedLearning] = useState<Learning | null>(null);
 
-  // Merge and sort by timestamp
+  // Sort by timestamp
   const timeline = useMemo(() => {
-    const entries: TimelineEntry[] = [
-      ...events.map((e) => ({ kind: 'event' as const, data: e })),
-      ...learnings.map((l) => ({ kind: 'learning' as const, data: l })),
-    ];
-    return entries.sort(
-      (a, b) => new Date(b.data.timestamp).getTime() - new Date(a.data.timestamp).getTime()
+    return [...events].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
-  }, [events, learnings]);
+  }, [events]);
 
   const rowVirtualizer = useVirtualizer({
     count: timeline.length,
@@ -136,12 +129,11 @@ export function UnifiedTimeline({
             }}
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const entry = timeline[virtualRow.index];
-              const entryId = entry.kind === 'event' ? `e-${entry.data.id}` : `l-${entry.data.id}`;
+              const event = timeline[virtualRow.index];
 
               return (
                 <div
-                  key={entryId}
+                  key={`e-${event.id}`}
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -151,17 +143,10 @@ export function UnifiedTimeline({
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  {entry.kind === 'event' ? (
-                    <EventRow
-                      event={entry.data}
-                      onClick={() => setSelectedEvent(entry.data)}
-                    />
-                  ) : (
-                    <LearningRow
-                      learning={entry.data}
-                      onClick={() => setSelectedLearning(entry.data)}
-                    />
-                  )}
+                  <EventRow
+                    event={event}
+                    onClick={() => setSelectedEvent(event)}
+                  />
                 </div>
               );
             })}
@@ -191,14 +176,6 @@ export function UnifiedTimeline({
         <EventDetailModal
           event={selectedEvent}
           onClose={() => setSelectedEvent(null)}
-        />
-      )}
-
-      {/* Learning detail modal */}
-      {selectedLearning && (
-        <LearningDetailModal
-          learning={selectedLearning}
-          onClose={() => setSelectedLearning(null)}
         />
       )}
     </>
@@ -236,38 +213,6 @@ function EventRow({
   );
 }
 
-function LearningRow({
-  learning,
-  onClick,
-}: {
-  learning: Learning;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      className="flex items-center px-4 py-3 gap-4 border-b cursor-pointer transition-colors"
-      style={{ borderColor: 'var(--ctp-surface1)' }}
-      onClick={onClick}
-      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--ctp-surface1)')}
-      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-    >
-      <div className="w-36 flex-shrink-0 text-sm font-mono" style={{ color: 'var(--ctp-subtext1)' }}>
-        {formatDate(learning.timestamp, 'compactWithSeconds')}
-      </div>
-      <div className="w-28 flex-shrink-0">
-        <TypeBadge type="learning" />
-      </div>
-      <div className="flex-1 min-w-0 text-sm truncate" style={{ color: 'var(--ctp-text)' }}>
-        {learning.content.replace(/\n/g, ' ').slice(0, 120)}
-        {learning.content.length > 120 && '...'}
-      </div>
-      <div className="w-4 flex-shrink-0 text-xs" style={{ color: 'var(--ctp-overlay0)' }}>
-        ▶
-      </div>
-    </div>
-  );
-}
-
 function TypeBadge({ type }: { type: string }) {
   const { bg, text } = getEventTypeColor(type);
 
@@ -278,77 +223,5 @@ function TypeBadge({ type }: { type: string }) {
     >
       {type}
     </span>
-  );
-}
-
-function LearningDetailModal({
-  learning,
-  onClose,
-}: {
-  learning: Learning;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-lg max-w-3xl w-full max-h-[80vh] overflow-auto shadow-2xl"
-        style={{ backgroundColor: 'var(--ctp-base)', border: '1px solid var(--ctp-surface1)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 border-b"
-          style={{ borderColor: 'var(--ctp-surface0)' }}
-        >
-          <div className="flex items-center gap-3">
-            <TypeBadge type="learning" />
-            <span className="text-sm font-mono" style={{ color: 'var(--ctp-subtext0)' }}>
-              {formatDate(learning.timestamp, 'full')}
-            </span>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-lg px-2"
-            style={{ color: 'var(--ctp-subtext0)' }}
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="p-6">
-          <div
-            className="p-4 rounded font-mono text-sm whitespace-pre-wrap"
-            style={{ backgroundColor: 'var(--ctp-surface0)', color: 'var(--ctp-text)' }}
-          >
-            {learning.content}
-          </div>
-
-          {/* Metadata */}
-          <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-            {learning.repo_name && (
-              <div>
-                <span style={{ color: 'var(--ctp-subtext0)' }}>Repo:</span>{' '}
-                <span style={{ color: 'var(--ctp-text)' }}>{learning.repo_name}</span>
-              </div>
-            )}
-            {learning.branch && (
-              <div>
-                <span style={{ color: 'var(--ctp-subtext0)' }}>Branch:</span>{' '}
-                <span style={{ color: 'var(--ctp-text)' }}>{learning.branch}</span>
-              </div>
-            )}
-            {learning.cwd && (
-              <div className="col-span-2">
-                <span style={{ color: 'var(--ctp-subtext0)' }}>Directory:</span>{' '}
-                <span className="font-mono" style={{ color: 'var(--ctp-text)' }}>{learning.cwd}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }

@@ -4,11 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../api';
 import { UnifiedTimeline } from '../../components/UnifiedTimeline';
 import { RepoEventsView } from './RepoEventsView';
-import { RepoLearningsView } from './RepoLearningsView';
 import { RepoFilters } from './RepoFilters';
 import { calculateSinceDate, type TimeRange } from '../../utils/dateUtils';
 
-type ViewMode = 'unified' | 'events' | 'learnings';
+type ViewMode = 'unified' | 'events';
 
 export function RepoPage() {
   const { remoteUrl } = useParams<{ remoteUrl: string }>();
@@ -25,21 +24,12 @@ export function RepoPage() {
   const repoInfo = stats?.repos?.find((r) => r.remote_url === decodedUrl);
   const since = useMemo(() => calculateSinceDate(timeRange), [timeRange]);
 
-  const { data: events, isLoading: eventsLoading, error: eventsError } = useQuery({
+  const { data: events, isLoading, error } = useQuery({
     queryKey: ['repo-events', decodedUrl, since],
     queryFn: () => api.events.list({ limit: 500, since }),
     enabled: !!decodedUrl,
     refetchInterval: 5000,
   });
-
-  const { data: learnings, isLoading: learningsLoading } = useQuery({
-    queryKey: ['repo-learnings', decodedUrl, since],
-    queryFn: () => api.learnings.list({ remote_url: decodedUrl, limit: 100, since }),
-    enabled: !!decodedUrl,
-    refetchInterval: 5000,
-  });
-
-  const isLoading = eventsLoading || learningsLoading;
 
   // Filter events by repo
   const repoEvents = useMemo(() => {
@@ -47,14 +37,11 @@ export function RepoPage() {
     return events.filter((e) => e.metadata?.remote_url === decodedUrl);
   }, [events, decodedUrl]);
 
-  const repoLearnings = useMemo(() => learnings ?? [], [learnings]);
-
   // Event types present in this repo
   const eventTypes = useMemo(() => {
     const types = new Set(repoEvents.map((e) => e.event_type));
-    if (repoLearnings.length > 0) types.add('learning');
     return Array.from(types).sort();
-  }, [repoEvents, repoLearnings]);
+  }, [repoEvents]);
 
   // Counts by type
   const countsByType = useMemo(() => {
@@ -62,9 +49,8 @@ export function RepoPage() {
     for (const e of repoEvents) {
       counts[e.event_type] = (counts[e.event_type] || 0) + 1;
     }
-    if (repoLearnings.length > 0) counts['learning'] = repoLearnings.length;
     return counts;
-  }, [repoEvents, repoLearnings]);
+  }, [repoEvents]);
 
   // Filtered data for unified view
   const filteredEvents = useMemo(() => {
@@ -72,18 +58,11 @@ export function RepoPage() {
     return repoEvents.filter((e) => selectedTypes.includes(e.event_type));
   }, [repoEvents, selectedTypes]);
 
-  const filteredLearnings = useMemo(() => {
-    if (selectedTypes.length === 0) return repoLearnings;
-    return selectedTypes.includes('learning') ? repoLearnings : [];
-  }, [repoLearnings, selectedTypes]);
-
   const toggleType = (type: string) => {
     setSelectedTypes((prev) =>
       prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
     );
   };
-
-  const totalInView = filteredEvents.length + filteredLearnings.length;
 
   if (isLoading) {
     return (
@@ -93,10 +72,10 @@ export function RepoPage() {
     );
   }
 
-  if (eventsError) {
+  if (error) {
     return (
       <div className="p-4 rounded-lg" style={{ backgroundColor: 'var(--ctp-surface0)', color: 'var(--ctp-red)' }}>
-        Error loading events: {(eventsError as Error).message}
+        Error loading events: {(error as Error).message}
       </div>
     );
   }
@@ -117,9 +96,9 @@ export function RepoPage() {
       <div className="flex items-center justify-between p-4 rounded-lg" style={{ backgroundColor: 'var(--ctp-surface0)' }}>
         <div className="text-sm" style={{ color: 'var(--ctp-subtext0)' }}>{decodedUrl}</div>
         <div className="flex items-center gap-4">
-          <span className="text-sm" style={{ color: 'var(--ctp-subtext1)' }}>{totalInView} in view</span>
+          <span className="text-sm" style={{ color: 'var(--ctp-subtext1)' }}>{filteredEvents.length} in view</span>
           <span className="text-sm" style={{ color: 'var(--ctp-text)' }}>
-            {(repoInfo?.event_count ?? 0) + repoLearnings.length} total
+            {repoInfo?.event_count ?? 0} total
           </span>
         </div>
       </div>
@@ -140,13 +119,10 @@ export function RepoPage() {
       {/* Content area */}
       <div className="flex-1 min-h-0">
         {viewMode === 'unified' && (
-          <UnifiedTimeline events={filteredEvents} learnings={filteredLearnings} hasMore={false} />
+          <UnifiedTimeline events={filteredEvents} hasMore={false} />
         )}
         {viewMode === 'events' && (
           <RepoEventsView events={repoEvents} selectedTypes={selectedTypes} />
-        )}
-        {viewMode === 'learnings' && (
-          <RepoLearningsView learnings={repoLearnings} />
         )}
       </div>
     </div>

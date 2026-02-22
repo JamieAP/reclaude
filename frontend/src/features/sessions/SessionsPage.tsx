@@ -274,16 +274,6 @@ export function SessionsPage() {
                   </>
                 )}
 
-                {/* Learnings */}
-                {session.learnings_count > 0 && (
-                  <>
-                    <span style={{ color: 'var(--ctp-surface2)' }}>·</span>
-                    <span style={{ color: 'var(--ctp-mauve)' }}>
-                      {session.learnings_count} learning{session.learnings_count !== 1 ? 's' : ''}
-                    </span>
-                  </>
-                )}
-
                 {/* Compactions */}
                 {session.compaction_count > 0 && (
                   <>

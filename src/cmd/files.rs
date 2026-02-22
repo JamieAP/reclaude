@@ -4,10 +4,12 @@ use crate::cli::FilesArgs;
 use crate::cmd;
 use crate::db::Database;
 
-/// Tools that touch files (all have file_path parameter in their input).
-const FILE_TOOLS: &[&str] = &["Read", "Write", "Edit", "NotebookEdit"];
+/// Tools that modify files.
+const WRITE_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit"];
+/// Tools that read files (included with --reads).
+const READ_TOOLS: &[&str] = &["Read"];
 
-/// Find files touched by Claude, sorted by last touch time.
+/// Find files modified by Claude, sorted by last modification time.
 pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
     // Resolve session filter
     let session_id = if let Some(ref s) = args.session {
@@ -39,7 +41,9 @@ pub async fn run(args: &FilesArgs, db: &Database) -> anyhow::Result<()> {
 
     for event in &events {
         let tool = event.tool_name.as_deref().unwrap_or("");
-        if !FILE_TOOLS.contains(&tool) {
+        let is_file_tool = WRITE_TOOLS.contains(&tool)
+            || (args.reads && READ_TOOLS.contains(&tool));
+        if !is_file_tool {
             continue;
         }
 

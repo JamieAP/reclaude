@@ -34,7 +34,7 @@ pub enum Commands {
     /// Full-text and semantic search over events
     Search(SearchArgs),
 
-    /// Find files touched by Claude
+    /// Find files modified by Claude
     Files(FilesArgs),
 
     /// Time-bucketed activity summary across repos
@@ -296,6 +296,10 @@ pub struct FilesArgs {
     /// Show full content
     #[arg(long)]
     pub full: bool,
+
+    /// Include reads (default: only writes/edits)
+    #[arg(long)]
+    pub reads: bool,
 
     /// Show files from all directories (default: cwd only)
     #[arg(long)]

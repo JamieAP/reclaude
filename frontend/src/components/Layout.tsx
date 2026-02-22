@@ -4,7 +4,6 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/events', label: 'Events' },
   { to: '/sessions', label: 'Sessions' },
-  { to: '/learnings', label: 'Learnings' },
   { to: '/personas', label: 'Personas' },
   { to: '/focus', label: 'Focus' },
 ];

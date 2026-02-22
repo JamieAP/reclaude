@@ -34,7 +34,6 @@ export const EVENT_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
   permission_request: { bg: 'var(--rc-badge-permission-bg)', text: 'var(--rc-badge-permission-text)' },
 
   // Special
-  learning: { bg: 'var(--rc-badge-learning-bg)', text: 'var(--rc-badge-learning-text)' },
   error: { bg: 'var(--rc-badge-error-bg)', text: 'var(--rc-badge-error-text)' },
 };
 

@@ -4,8 +4,6 @@ import { Layout } from './components/Layout';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { EventsPage } from './features/events/EventsPage';
 import { SessionsPage } from './features/sessions/SessionsPage';
-import { LearningsPage } from './features/learnings/LearningsPage';
-import { LearningDetailPage } from './features/learnings/LearningDetailPage';
 import { PersonasPage } from './features/personas/PersonasPage';
 import { FocusPage } from './features/focus/FocusPage';
 import { RepoPage } from './features/repos/RepoPage';
@@ -28,8 +26,6 @@ function App() {
             <Route index element={<DashboardPage />} />
             <Route path="events" element={<EventsPage />} />
             <Route path="sessions" element={<SessionsPage />} />
-            <Route path="learnings" element={<LearningsPage />} />
-            <Route path="learnings/:id" element={<LearningDetailPage />} />
             <Route path="personas" element={<PersonasPage />} />
             <Route path="focus" element={<FocusPage />} />
             <Route path="repos/:remoteUrl" element={<RepoPage />} />

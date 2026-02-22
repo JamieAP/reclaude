@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::models::{ScanState, Session, SessionTranscript};
 
 use super::Database;
@@ -319,6 +321,329 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ── Recap ─────────────────────────────────────────────────────────
+
+    /// Time-bucketed activity summary grouped by repo.
+    /// Returns rows sorted by bucket (most recent first), then event count DESC.
+    pub async fn query_recap(&self, opts: &RecapOptions) -> anyhow::Result<Vec<RecapRow>> {
+        let conn = self.conn.lock().unwrap();
+
+        // When zoomed, use cumulative time range; otherwise exclusive buckets
+        let bucket_expr = if let Some(ref zoom) = opts.zoom {
+            let interval = match zoom.as_str() {
+                "2h" => "-2 hours",
+                "24h" => "-24 hours",
+                "7d" => "-7 days",
+                _ => "-7 days",
+            };
+            format!(
+                "CASE WHEN e.timestamp >= datetime('now', '{interval}') THEN '{zoom}' ELSE NULL END"
+            )
+        } else {
+            "CASE \
+                WHEN e.timestamp >= datetime('now', '-2 hours') THEN '2h' \
+                WHEN e.timestamp >= datetime('now', '-24 hours') THEN '24h' \
+                WHEN e.timestamp >= datetime('now', '-7 days') THEN '7d' \
+            END".to_string()
+        };
+
+        let sql = format!(
+            "WITH bucketed AS (
+                SELECT
+                    {bucket_expr} as bucket,
+                    COALESCE(s.repo_name,
+                        CASE WHEN e.cwd LIKE '/home/%/dev/%' THEN
+                            substr(e.cwd, instr(e.cwd, '/dev/') + 5,
+                                CASE WHEN instr(substr(e.cwd, instr(e.cwd, '/dev/') + 5), '/') > 0
+                                    THEN instr(substr(e.cwd, instr(e.cwd, '/dev/') + 5), '/') - 1
+                                    ELSE length(substr(e.cwd, instr(e.cwd, '/dev/') + 5))
+                                END)
+                        ELSE e.cwd END
+                    ) as repo,
+                    e.event_type,
+                    e.session_id
+                FROM events e
+                LEFT JOIN sessions s ON e.session_id = s.session_id
+                WHERE e.timestamp >= datetime('now', '-7 days')
+            )
+            SELECT
+                bucket, repo,
+                COUNT(*) as events,
+                COUNT(DISTINCT session_id) as sessions,
+                SUM(CASE WHEN event_type = 'file_diff' THEN 1 ELSE 0 END) as diffs,
+                SUM(CASE WHEN event_type = 'user_prompt' THEN 1 ELSE 0 END) as prompts
+            FROM bucketed
+            WHERE bucket IS NOT NULL AND repo IS NOT NULL AND repo != ''
+            GROUP BY bucket, repo
+            HAVING events >= ?1
+            ORDER BY
+                CASE bucket WHEN '2h' THEN 0 WHEN '24h' THEN 1 WHEN '7d' THEN 2 END,
+                events DESC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows: Vec<RecapRow> = stmt.query_map([opts.min_events as i64], |row| {
+            Ok(RecapRow {
+                bucket: row.get(0)?,
+                repo: row.get(1)?,
+                events: row.get::<_, i64>(2)? as usize,
+                sessions: row.get::<_, i64>(3)? as usize,
+                diffs: row.get::<_, i64>(4)? as usize,
+                prompts: row.get::<_, i64>(5)? as usize,
+                top_files: Vec::new(),
+                top_dirs: Vec::new(),
+                top_prompts: Vec::new(),
+                session_info: Vec::new(),
+            })
+        })?.filter_map(|r| r.ok()).collect();
+
+        // Step 2: Enrich each row with file paths and (if zoomed) prompts
+        let mut result = Vec::with_capacity(rows.len());
+        for mut row in rows {
+            let bucket_clause = if opts.zoom.is_some() {
+                // Zoomed: cumulative window
+                match row.bucket.as_str() {
+                    "2h" => "e.timestamp >= datetime('now', '-2 hours')",
+                    "24h" => "e.timestamp >= datetime('now', '-24 hours')",
+                    "7d" => "e.timestamp >= datetime('now', '-7 days')",
+                    _ => continue,
+                }
+            } else {
+                // Overview: exclusive windows
+                match row.bucket.as_str() {
+                    "2h" => "e.timestamp >= datetime('now', '-2 hours')",
+                    "24h" => "e.timestamp >= datetime('now', '-24 hours') AND e.timestamp < datetime('now', '-2 hours')",
+                    "7d" => "e.timestamp >= datetime('now', '-7 days') AND e.timestamp < datetime('now', '-24 hours')",
+                    _ => continue,
+                }
+            };
+
+            // File data: individual paths (overview) or directory aggregation (zoomed)
+            let want_files = (opts.zoom.is_some() && opts.dir_limit > 0)
+                || (opts.zoom.is_none() && opts.file_limit > 0);
+            if want_files {
+                let sql_limit = if opts.zoom.is_some() { 200 } else { opts.file_limit };
+                let file_sql = format!(
+                    "SELECT
+                        CASE
+                            WHEN e.content LIKE '--- /%' THEN substr(e.content, 5, instr(substr(e.content, 5), char(10))-1)
+                            WHEN e.content LIKE '+++ /%' THEN substr(e.content, 5, instr(substr(e.content, 5), char(10))-1)
+                            ELSE NULL
+                        END as filepath,
+                        COUNT(*) as touches
+                    FROM events e
+                    LEFT JOIN sessions s ON e.session_id = s.session_id
+                    WHERE e.event_type = 'file_diff'
+                        AND {bucket_clause}
+                        AND COALESCE(s.repo_name, '') = ?1
+                        AND filepath IS NOT NULL
+                        AND filepath != '/dev/null'
+                    GROUP BY filepath
+                    ORDER BY touches DESC
+                    LIMIT ?2"
+                );
+                if let Ok(mut fstmt) = conn.prepare(&file_sql) {
+                    if let Ok(files) = fstmt.query_map(
+                        rusqlite::params![&row.repo, sql_limit as i64],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)),
+                    ) {
+                        let entries: Vec<(String, usize)> =
+                            files.filter_map(|r| r.ok()).collect();
+
+                        if opts.zoom.is_some() {
+                            // Aggregate files into directories
+                            let mut dir_map: HashMap<String, (usize, usize)> = HashMap::new();
+                            for (filepath, touches) in &entries {
+                                let dir = match filepath.rfind('/') {
+                                    Some(idx) => filepath[..idx + 1].to_string(),
+                                    None => String::new(),
+                                };
+                                let stats = dir_map.entry(dir).or_insert((0, 0));
+                                stats.0 += 1; // unique files
+                                stats.1 += touches; // total edits
+                            }
+                            let mut dirs: Vec<DirStats> = dir_map
+                                .into_iter()
+                                .map(|(dir, (files, edits))| DirStats {
+                                    dir,
+                                    unique_files: files,
+                                    total_edits: edits,
+                                })
+                                .collect();
+                            dirs.sort_by(|a, b| b.total_edits.cmp(&a.total_edits));
+                            dirs.truncate(opts.dir_limit);
+                            row.top_dirs = dirs;
+                        } else {
+                            row.top_files =
+                                entries.into_iter().map(|(f, _)| f).collect();
+                        }
+                    }
+                }
+            }
+
+            // Session tree (only when zoomed)
+            if opts.session_limit > 0 {
+                let session_sql = format!(
+                    "SELECT
+                        ms.session_id,
+                        ms.event_count,
+                        COALESCE(
+                            (SELECT COUNT(*) FROM session_transcripts st
+                             WHERE st.parent_session_id = ms.session_id), 0
+                        ) as child_count,
+                        COALESCE(
+                            (SELECT substr(e2.content, 1, 100)
+                             FROM events e2
+                             WHERE e2.session_id = ms.session_id
+                               AND e2.event_type = 'user_prompt'
+                             ORDER BY e2.timestamp ASC
+                             LIMIT 1),
+                            ''
+                        ) as first_prompt
+                    FROM (
+                        SELECT e.session_id, COUNT(*) as event_count
+                        FROM events e
+                        LEFT JOIN sessions s ON e.session_id = s.session_id
+                        WHERE {bucket_clause}
+                            AND COALESCE(s.repo_name, '') = ?1
+                        GROUP BY e.session_id
+                    ) ms
+                    ORDER BY ms.event_count DESC
+                    LIMIT ?2"
+                );
+                if let Ok(mut sstmt) = conn.prepare(&session_sql) {
+                    if let Ok(sessions) = sstmt.query_map(
+                        rusqlite::params![&row.repo, opts.session_limit as i64],
+                        |r| {
+                            Ok(SessionInfo {
+                                session_id: r.get(0)?,
+                                event_count: r.get::<_, i64>(1)? as usize,
+                                child_count: r.get::<_, i64>(2)? as usize,
+                                description: r
+                                    .get::<_, String>(3)?
+                                    .trim()
+                                    .replace('\n', " "),
+                                spawns: Vec::new(),
+                            })
+                        },
+                    ) {
+                        let mut infos: Vec<SessionInfo> =
+                            sessions.filter_map(|r| r.ok()).collect();
+
+                        // Enrich with subagent_spawn descriptions
+                        for info in &mut infos {
+                            if info.child_count == 0 {
+                                continue;
+                            }
+                            let spawn_sql =
+                                "SELECT substr(content, 1,
+                                    CASE WHEN instr(content, char(10)) > 0
+                                         THEN instr(content, char(10)) - 1
+                                         ELSE 100 END)
+                                 FROM events
+                                 WHERE session_id = ?1
+                                   AND event_type = 'subagent_spawn'
+                                 ORDER BY timestamp DESC
+                                 LIMIT 8";
+                            if let Ok(mut sstmt2) = conn.prepare(spawn_sql) {
+                                if let Ok(spawns) = sstmt2.query_map(
+                                    [&info.session_id],
+                                    |r| r.get::<_, String>(0),
+                                ) {
+                                    info.spawns = spawns
+                                        .filter_map(|r| r.ok())
+                                        .collect();
+                                }
+                            }
+                        }
+
+                        row.session_info = infos;
+                    }
+                }
+            }
+
+            // Top prompts (only when zoomed)
+            if opts.prompt_limit > 0 {
+                let prompt_sql = format!(
+                    "SELECT substr(e.content, 1, 120)
+                    FROM events e
+                    LEFT JOIN sessions s ON e.session_id = s.session_id
+                    WHERE e.event_type = 'user_prompt'
+                        AND {bucket_clause}
+                        AND COALESCE(s.repo_name, '') = ?1
+                        AND length(e.content) > 5
+                    ORDER BY e.timestamp DESC
+                    LIMIT ?2"
+                );
+                if let Ok(mut pstmt) = conn.prepare(&prompt_sql) {
+                    if let Ok(prompts) = pstmt.query_map(
+                        rusqlite::params![&row.repo, opts.prompt_limit as i64],
+                        |r| r.get::<_, String>(0),
+                    ) {
+                        row.top_prompts = prompts
+                            .filter_map(|r| r.ok())
+                            .map(|s| s.trim().replace('\n', " "))
+                            .collect();
+                    }
+                }
+            }
+
+            result.push(row);
+        }
+
+        Ok(result)
+    }
+}
+
+/// A single row in the recap: one repo in one time bucket.
+pub struct RecapRow {
+    pub bucket: String,
+    pub repo: String,
+    pub events: usize,
+    pub sessions: usize,
+    pub diffs: usize,
+    pub prompts: usize,
+    /// Top file paths touched (from diffs), for overview mode.
+    pub top_files: Vec<String>,
+    /// Directory-level aggregation (from diffs), for zoomed mode.
+    pub top_dirs: Vec<DirStats>,
+    /// Recent user prompts (newest first), for zoomed views.
+    pub top_prompts: Vec<String>,
+    /// Session tree info (parent → child), for zoomed views.
+    pub session_info: Vec<SessionInfo>,
+}
+
+/// Directory-level edit statistics.
+pub struct DirStats {
+    pub dir: String,
+    pub unique_files: usize,
+    pub total_edits: usize,
+}
+
+/// Session identity with spawned subagent info for tree display.
+pub struct SessionInfo {
+    pub session_id: String,
+    pub event_count: usize,
+    pub child_count: usize,
+    pub description: String,
+    /// First-line descriptions from subagent_spawn events.
+    pub spawns: Vec<String>,
+}
+
+/// Which time window to show, and how much detail.
+pub struct RecapOptions {
+    pub min_events: usize,
+    /// If set, show only this bucket with extra detail.
+    pub zoom: Option<String>,
+    /// Max file paths per row (overview mode).
+    pub file_limit: usize,
+    /// Max directories per row (zoomed mode).
+    pub dir_limit: usize,
+    /// Max sessions per row (0 = skip).
+    pub session_limit: usize,
+    /// Max prompts per row (0 = skip).
+    pub prompt_limit: usize,
 }
 
 /// Aggregate statistics for the transcript archive.

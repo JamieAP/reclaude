@@ -35,7 +35,6 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total Events" value={stats?.total_events ?? 0} color="var(--ctp-blue)" to="/events" />
         <StatCard label="Sessions" value={stats?.total_sessions ?? 0} color="var(--ctp-green)" to="/sessions" />
-        <StatCard label="Learnings" value={stats?.total_learnings ?? 0} color="var(--ctp-mauve)" to="/learnings" />
         <StatCard label="Repositories" value={stats?.repos?.length ?? 0} color="var(--ctp-peach)" />
       </div>
 
