@@ -9,6 +9,7 @@ mod fzf;
 mod gemini;
 mod git;
 mod logging;
+mod mattermost;
 mod models;
 
 use clap::Parser;

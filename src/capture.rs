@@ -161,6 +161,17 @@ async fn insert_and_upsert(db: &Database, event: &Event) -> anyhow::Result<i64> 
             event.branch.as_deref(),
         ).await?;
     }
+
+    // Best-effort Mattermost sync: never fail capture on chat post issues.
+    if let Err(error) = crate::mattermost::maybe_post_hook_event(db, event).await {
+        warn!(
+            session_id = ?event.session_id,
+            event_type = %event.event_type,
+            %error,
+            "mattermost_hook_post_failed"
+        );
+    }
+
     Ok(id)
 }
 

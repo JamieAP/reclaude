@@ -87,6 +87,46 @@ impl Database {
         Ok(sessions)
     }
 
+    /// Get the Mattermost thread mapping for a session.
+    pub async fn get_mm_thread(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn.query_row(
+            "SELECT channel_spec, root_post_id FROM session_mm_threads WHERE session_id = ?1",
+            [session_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        );
+
+        match row {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Upsert the Mattermost thread mapping for a session.
+    pub async fn upsert_mm_thread(
+        &self,
+        session_id: &str,
+        channel_spec: &str,
+        root_post_id: &str,
+        timestamp: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO session_mm_threads (session_id, channel_spec, root_post_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(session_id) DO UPDATE SET
+               channel_spec = excluded.channel_spec,
+               root_post_id = excluded.root_post_id,
+               updated_at = excluded.updated_at",
+            rusqlite::params![session_id, channel_spec, root_post_id, timestamp],
+        )?;
+        Ok(())
+    }
+
     // ── Tag Operations ──────────────────────────────────────────────
 
     /// Create a random tag for the current session context.
@@ -665,4 +705,65 @@ fn generate_tag() -> String {
         .as_micros();
     // 12-char hex tag from full microsecond timestamp (unique across calls)
     format!("{:012x}", micros & 0xFFFF_FFFF_FFFF)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn open_db() -> (Database, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db = Database::open_at(dir.path()).unwrap();
+        (db, dir)
+    }
+
+    #[tokio::test]
+    async fn mm_thread_roundtrip() {
+        let (db, _dir) = open_db();
+        assert!(db.get_mm_thread("sess-001").await.unwrap().is_none());
+
+        db.upsert_mm_thread(
+            "sess-001",
+            "demo:sessions",
+            "root-post-1",
+            "2026-02-27T12:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        let thread = db.get_mm_thread("sess-001").await.unwrap();
+        assert_eq!(
+            thread,
+            Some((
+                "demo:sessions".to_string(),
+                "root-post-1".to_string()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn mm_thread_upsert_overwrites_existing_mapping() {
+        let (db, _dir) = open_db();
+        db.upsert_mm_thread(
+            "sess-001",
+            "demo:sessions",
+            "root-post-1",
+            "2026-02-27T12:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        db.upsert_mm_thread(
+            "sess-001",
+            "demo:sessions",
+            "root-post-2",
+            "2026-02-27T12:05:00Z",
+        )
+        .await
+        .unwrap();
+
+        let thread = db.get_mm_thread("sess-001").await.unwrap().unwrap();
+        assert_eq!(thread.1, "root-post-2");
+    }
 }

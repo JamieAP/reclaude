@@ -94,6 +94,17 @@ impl Database {
                 is_active    INTEGER DEFAULT 1
             );
 
+            CREATE TABLE IF NOT EXISTS session_mm_threads (
+                session_id   TEXT PRIMARY KEY,
+                channel_spec TEXT NOT NULL,
+                root_post_id TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_mm_threads_channel
+                ON session_mm_threads(channel_spec);
+
             CREATE TABLE IF NOT EXISTS session_transcripts (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id        TEXT NOT NULL UNIQUE,
