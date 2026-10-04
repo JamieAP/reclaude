@@ -40,15 +40,22 @@ impl Database {
     /// Open or create the database at `~/.reclaude/`.
     pub async fn open() -> anyhow::Result<Self> {
         let base = base_dir();
-        std::fs::create_dir_all(&base)?;
+        crate::private_fs::ensure_private_dir(&base)?;
         Self::open_at(&base)
     }
 
     /// Open or create the database at a specific base directory.
     pub fn open_at(base: &Path) -> anyhow::Result<Self> {
+        crate::private_fs::ensure_private_dir(base)?;
         init_sqlite_vec();
 
         let db_path = base.join("metadata.db");
+        drop(crate::private_fs::open_private_file(&db_path, false)?);
+        let sidecars: Vec<PathBuf> = ["-wal", "-shm", "-journal"].iter().map(|suffix| {
+            let mut name = db_path.as_os_str().to_os_string();
+            name.push(suffix); PathBuf::from(name)
+        }).collect();
+        for sidecar in &sidecars { crate::private_fs::harden_existing_file(sidecar)?; }
         let conn = Connection::open(&db_path)?;
 
         conn.execute_batch(
@@ -63,6 +70,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.ensure_schema()?;
+        for sidecar in &sidecars { crate::private_fs::harden_existing_file(sidecar)?; }
 
         // Verify sqlite-vec is loaded
         {
@@ -169,4 +177,21 @@ pub fn base_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
         .join(".reclaude")
+}
+
+#[cfg(all(test, unix))]
+mod privacy_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn private_state_and_database_sidecars_are_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _db = Database::open_at(dir.path()).unwrap();
+        assert_eq!(std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777, 0o700);
+        for name in ["metadata.db", "metadata.db-wal", "metadata.db-shm"] {
+            let path = dir.path().join(name);
+            assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600, "{}", name);
+        }
+    }
 }

@@ -21,3 +21,10 @@ frontend/dist/
 
 # Worktrees
 .worktrees/
+
+.env
+.env.*
+*.db-wal
+*.db-shm
+*.db-journal
+*.ans

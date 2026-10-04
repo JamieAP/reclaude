@@ -22,12 +22,18 @@ fn home_dir() -> PathBuf {
 /// RUST_LOG env var controls filter level (default: info).
 pub fn init() {
     let log_dir = log_dir();
-    let _ = std::fs::create_dir_all(&log_dir);
-
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("reclaude=info"));
-
-    let file_appender = tracing_appender::rolling::never(&log_dir, "reclaude.jsonl");
+    let private_file = crate::private_fs::ensure_private_dir(&dirs_home())
+        .and_then(|_| crate::private_fs::ensure_private_dir(&log_dir))
+        .and_then(|_| crate::private_fs::open_private_file(&log_dir.join("reclaude.jsonl"), true));
+    let file_appender: fmt::writer::BoxMakeWriter = match private_file {
+        Ok(file) => fmt::writer::BoxMakeWriter::new(std::sync::Mutex::new(file)),
+        Err(_) => {
+            eprintln!("reclaude: private file logging unavailable; using stderr");
+            fmt::writer::BoxMakeWriter::new(std::io::stderr)
+        }
+    };
 
     tracing_subscriber::registry()
         .with(filter)

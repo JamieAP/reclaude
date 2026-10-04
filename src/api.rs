@@ -6,7 +6,6 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
 use axum::Router;
-use tower_http::cors::CorsLayer;
 
 use crate::db::Database;
 
@@ -15,21 +14,7 @@ pub async fn serve(host: &str, port: u16, no_open: bool) -> anyhow::Result<()> {
     let db = Database::open().await?;
     let state = Arc::new(db);
 
-    let api_routes = Router::new()
-        .route("/health", get(health))
-        .route("/events", get(list_events))
-        .route("/events/{id}", get(get_event))
-        .route("/sessions", get(list_sessions))
-        .route("/statistics", get(statistics))
-.route("/repos", get(list_repos))
-        .route("/focus", get(list_focus))
-        .route("/personas/usage", get(personas_usage))
-        .route("/personas/timeline", get(personas_timeline));
-
-    let mut app = Router::new()
-        .nest("/api", api_routes)
-        .layer(CorsLayer::permissive())
-        .with_state(state.clone());
+    let mut app = api_router(state);
 
     // Serve static frontend from dist/ if it exists
     let dist_dir = frontend_dist_dir();
@@ -64,6 +49,26 @@ pub async fn serve(host: &str, port: u16, no_open: bool) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn api_router(state: Arc<Database>) -> Router {
+    let api_routes = Router::new()
+        .route("/health", get(health))
+        .route("/events", get(list_events))
+        .route("/events/{id}", get(get_event))
+        .route("/sessions", get(list_sessions))
+        .route("/statistics", get(statistics))
+.route("/repos", get(list_repos))
+        .route("/focus", get(list_focus))
+        .route("/personas/usage", get(personas_usage))
+        .route("/personas/timeline", get(personas_timeline));
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .with_state(state);
+    app
+
+
 }
 
 fn frontend_dist_dir() -> PathBuf {
@@ -342,4 +347,33 @@ fn event_json(e: &crate::models::Event) -> serde_json::Value {
         "file_path": e.file_path,
         "metadata": e.metadata(),
     })
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn unrelated_browser_origins_cannot_read_local_session_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open_at(dir.path()).unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api/health", listener.local_addr().unwrap());
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, api_router(db))
+                .with_graceful_shutdown(async { let _ = receive.await; }).await.unwrap();
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let response = client.get(&url).header("Origin", "https://unrelated.example").send().await.unwrap();
+        let allow = response.headers().get("access-control-allow-origin").cloned();
+        assert!(response.status().is_success());
+        let preflight = client.request(reqwest::Method::OPTIONS, &url)
+            .header("Origin", "https://unrelated.example")
+            .header("Access-Control-Request-Method", "GET").send().await.unwrap();
+        let preflight_allow = preflight.headers().get("access-control-allow-origin").cloned();
+        let _ = send.send(());
+        server.await.unwrap();
+        assert!(allow.is_none(), "unrelated origins can read private API responses");
+        assert!(preflight_allow.is_none(), "unrelated preflight approved");
+    }
 }

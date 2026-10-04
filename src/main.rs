@@ -11,6 +11,7 @@ mod git;
 mod logging;
 mod mattermost;
 mod models;
+mod private_fs;
 
 use clap::Parser;
 

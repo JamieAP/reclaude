@@ -1,73 +1,74 @@
-# React + TypeScript + Vite
+# Reclaude frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This React and TypeScript application displays data captured by Reclaude. It has
+views for activity statistics, events, sessions, repositories, persona usage, and
+saved focus summaries. It reads the local Rust backend through `/api`.
 
-Currently, two official plugins are available:
+See the [project README](../README.md) for hook installation and the full privacy
+and data-flow details.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Development
 
-## React Compiler
+You need Rust and Cargo for the backend, and Node.js and npm for the frontend.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Start the backend from the repository root in one terminal:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cargo run -- ui --no-open
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+In a second terminal, also starting from the repository root:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
+
+Open the URL printed by Vite. Its development server proxies `/api` to the
+backend at `http://localhost:8420`. If you change the backend port, update the
+proxy in [vite.config.ts](vite.config.ts). The UI uses captured records from
+`~/.reclaude/metadata.db`; a new database has no session activity to display.
+
+With frontend dependencies installed and `reclaude` on PATH, `just serve` from
+the repository root can start both servers instead.
+
+## Build and serve
+
+From the repository root:
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+cargo run -- ui --no-open
+```
+
+The build checks TypeScript and writes the bundled UI to `frontend/dist`. Open
+`http://127.0.0.1:8420` to use the UI served by the Rust backend. If no build is
+found, that server runs in API-only mode.
+
+For an installed binary outside the checkout, put the built files in
+`~/.reclaude/frontend/dist` or run the binary from the repository root. The server
+also checks for a build relative to a binary in the checkout's `target` directory.
+
+## Checks
+
+Run these from `frontend/`:
+
+```bash
+npm run lint
+npm run build
+```
+
+## Local access
+
+The backend binds to `127.0.0.1:8420` by default and provides no authentication.
+Use the local Vite proxy during development. Keep both servers on loopback;
+access from another machine requires a separately managed authenticated proxy.
+Local processes and code in the UI origin can access the captured session data.
+
+## License
+
+[MIT](../LICENSE). Dependencies retain their own licenses and notices.

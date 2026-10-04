@@ -67,7 +67,7 @@ All subcommands support `--help` for full flag reference. The critical ones:
 
 ## Scoping: Time > Location
 
-Recent events are almost always more relevant. `--all` FTS over many events will surface textually similar but unrelated results from other projects and months.
+Recent events are often more relevant. Broad `--all` FTS searches can surface textually similar but unrelated results from other projects and months.
 
 **Scope narrowly first, widen only if needed:**
 1. Default (no `--all`) - current cwd only

@@ -10,8 +10,6 @@ const EVENT_SESSION_START: &str = "session_start";
 const EVENT_USER_PROMPT: &str = "user_prompt";
 const EVENT_ASSISTANT: &str = "assistant";
 const DEFAULT_MMCTL_BIN: &str = "mmctl";
-const DEFAULT_TEAM: &str = "demo";
-const DEFAULT_CHANNEL: &str = "sessions";
 const MAX_MM_PAYLOAD_CHARS: usize = 12_000;
 
 #[derive(Debug, Clone)]
@@ -25,35 +23,19 @@ struct MmctlConfig {
 
 impl MmctlConfig {
     fn from_env() -> Self {
-        let enabled = parse_bool_env("RECLAUDE_MMCTL_ENABLED", true);
-        let bin =
-            std::env::var("RECLAUDE_MMCTL_BIN").unwrap_or_else(|_| DEFAULT_MMCTL_BIN.to_string());
-
-        let channel_env =
-            std::env::var("RECLAUDE_MM_CHANNEL").unwrap_or_else(|_| DEFAULT_CHANNEL.to_string());
-
-        if let Some((team, channel)) = channel_env.split_once(':') {
-            let team = team.trim().to_string();
-            let channel = channel.trim().to_string();
-            return Self {
-                enabled,
-                bin,
-                team: team.clone(),
-                channel: channel.clone(),
-                channel_spec: format!("{team}:{channel}"),
-            };
-        }
-
-        let team = std::env::var("RECLAUDE_MM_TEAM").unwrap_or_else(|_| DEFAULT_TEAM.to_string());
-        let channel = channel_env.trim().to_string();
-
-        Self {
-            enabled,
-            bin,
-            team: team.clone(),
-            channel: channel.clone(),
-            channel_spec: format!("{team}:{channel}"),
-        }
+        let enabled = parse_bool_env("RECLAUDE_MMCTL_ENABLED", false);
+        let bin = std::env::var("RECLAUDE_MMCTL_BIN")
+            .unwrap_or_else(|_| DEFAULT_MMCTL_BIN.to_string());
+        let channel_env = std::env::var("RECLAUDE_MM_CHANNEL").unwrap_or_default();
+        let (team, channel) = if let Some((team, channel)) = channel_env.split_once(':') {
+            (team.trim().to_string(), channel.trim().to_string())
+        } else {
+            (std::env::var("RECLAUDE_MM_TEAM").unwrap_or_default().trim().to_string(),
+             channel_env.trim().to_string())
+        };
+        // No posting until both explicit opt-in and a destination are supplied.
+        let enabled = enabled && !team.is_empty() && !channel.is_empty();
+        Self { enabled, bin, channel_spec: format!("{team}:{channel}"), team, channel }
     }
 }
 
@@ -107,7 +89,7 @@ struct MmPost {
 /// Hook entry point for Mattermost posting from capture events.
 ///
 /// Behavior:
-/// - On `session_start`, ensure per-session root thread exists in the configured session channel.
+/// - On `session_start`, ensure per-session root thread exists in the explicitly configured channel.
 /// - On `user_prompt` and `assistant`, post a formatted foldable reply in that thread.
 /// - Other event types are ignored.
 pub async fn maybe_post_hook_event(db: &Database, event: &Event) -> anyhow::Result<()> {
@@ -133,7 +115,7 @@ pub async fn maybe_post_hook_event(db: &Database, event: &Event) -> anyhow::Resu
     let thread = ensure_session_thread(db, &config, session_id, event).await?;
     let message = format_event_reply(kind, event, session_id);
 
-    let output = run_mmctl(
+    run_mmctl(
         &config,
         &[
             "--suppress-warnings",
@@ -150,7 +132,6 @@ pub async fn maybe_post_hook_event(db: &Database, event: &Event) -> anyhow::Resu
     debug!(
         session_id,
         event_type = event.event_type,
-        stdout = output.trim(),
         "mattermost_reply_posted"
     );
     Ok(())
@@ -163,6 +144,9 @@ async fn ensure_session_thread(
     event: &Event,
 ) -> anyhow::Result<SessionThread> {
     if let Some((channel_spec, root_post_id)) = db.get_mm_thread(session_id).await? {
+        if channel_spec != config.channel_spec {
+            bail!("configured Mattermost destination differs from saved session thread; migrate or remove the saved thread before posting");
+        }
         return Ok(SessionThread {
             channel_spec,
             root_post_id,
@@ -273,15 +257,10 @@ fn run_mmctl(config: &MmctlConfig, args: &[&str]) -> anyhow::Result<String> {
         .with_context(|| format!("failed to execute {}", config.bin))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
-        let detail = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
-        bail!("{} {:?} failed: {}", config.bin, args, detail);
+        // Arguments and subprocess output may include private conversation text.
+        bail!("Mattermost command failed with status {}", output.status);
     }
 
     Ok(stdout)
@@ -380,7 +359,7 @@ fn parse_bool_env(name: &str, default: bool) -> bool {
     match std::env::var(name) {
         Ok(v) => {
             let normalized = v.trim().to_ascii_lowercase();
-            !matches!(normalized.as_str(), "0" | "false" | "off" | "no")
+            matches!(normalized.as_str(), "1" | "true" | "on" | "yes")
         }
         Err(_) => default,
     }
@@ -413,6 +392,52 @@ fn find_post_id_by_marker(stdout: &str, marker: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_configuration_does_not_enable_remote_posting() {
+        assert!(std::env::var_os("RECLAUDE_MMCTL_ENABLED").is_none());
+        assert!(!MmctlConfig::from_env().enabled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_command_does_not_echo_message_arguments_or_output() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-mmctl");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$*\" >&2\nexit 23\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = MmctlConfig {
+            enabled: true, bin: script.to_string_lossy().into_owned(),
+            team: "demo".into(), channel: "sessions".into(), channel_spec: "demo:sessions".into(),
+        };
+        let error = run_mmctl(&config, &["post", "create", "--message", "private-payload-fixture"])
+            .unwrap_err().to_string();
+        assert!(!error.contains("private-payload-fixture"), "raw content escaped into diagnostics");
+        assert!(error.contains("23"), "safe exit status should remain available");
+    }
+
+    #[tokio::test]
+    async fn cached_thread_cannot_override_the_explicit_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open_at(dir.path()).unwrap();
+        db.upsert_mm_thread("fixture-session", "old-team:old-channel", "old-root", "2026-01-01")
+            .await.unwrap();
+        let config = MmctlConfig {
+            enabled: true, bin: "must-not-execute-mmctl".into(),
+            team: "current-team".into(), channel: "current-channel".into(),
+            channel_spec: "current-team:current-channel".into(),
+        };
+        let event = Event {
+            id: 1, timestamp: "2026-01-01T00:00:00Z".into(),
+            event_type: EVENT_SESSION_START.into(), category: "system".into(),
+            session_id: Some("fixture-session".into()), content: "fixture".into(),
+            cwd: None, remote_url: None, repo_name: None, branch: None,
+            tool_name: None, file_path: None, metadata_json: "{}".into(), vector: None,
+        };
+        let result = ensure_session_thread(&db, &config, "fixture-session", &event).await;
+        assert!(result.is_err(), "cached destination overrode current explicit configuration");
+    }
 
     #[test]
     fn extract_json_payload_skips_mmctl_preamble() {

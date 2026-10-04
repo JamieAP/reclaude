@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 /// API key read from `~/.config/gemini-api-key`.
 pub struct GeminiClient {
     api_key: String,
+    api_base: String,
     model: String,
     client: reqwest::Client,
     last_call: Option<Instant>,
@@ -29,8 +30,10 @@ impl GeminiClient {
 
         Ok(Self {
             api_key,
+            api_base: API_BASE.to_string(),
             model: model.unwrap_or(DEFAULT_MODEL).to_string(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none()).build()?,
             last_call: None,
         })
     }
@@ -45,10 +48,7 @@ impl GeminiClient {
             }
         }
 
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            API_BASE, self.model, self.api_key
-        );
+        let url = format!("{}/{}:generateContent", self.api_base, self.model);
 
         let full_prompt = format!("{prompt}\n\n---\n\n{data}");
         let body = serde_json::json!({
@@ -65,7 +65,13 @@ impl GeminiClient {
         for attempt in 0..MAX_RETRIES {
             self.last_call = Some(Instant::now());
 
-            let resp = self.client.post(&url).json(&body).send().await?;
+            let mut key = reqwest::header::HeaderValue::from_str(&self.api_key)
+                .map_err(|_| anyhow::anyhow!("Gemini API key has an invalid header format"))?;
+            key.set_sensitive(true);
+            let resp = self.client.post(&url)
+                .header("x-goog-api-key", key)
+                .json(&body).send().await
+                .map_err(|error| anyhow::anyhow!("Gemini request failed: {}", error.without_url()))?;
 
             if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 let wait = (attempt + 1) * 30;
@@ -75,7 +81,7 @@ impl GeminiClient {
             }
 
             if !resp.status().is_success() {
-                last_error = format!("HTTP {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+                last_error = format!("HTTP {}", resp.status());
                 if attempt < MAX_RETRIES - 1 {
                     eprintln!("    Retrying ({}/{MAX_RETRIES})...", attempt + 1);
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -84,7 +90,8 @@ impl GeminiClient {
                 anyhow::bail!("Gemini API error: {last_error}");
             }
 
-            let json: serde_json::Value = resp.json().await?;
+            let json: serde_json::Value = resp.json().await
+                .map_err(|error| anyhow::anyhow!("Gemini response could not be decoded: {}", error.without_url()))?;
 
             // Extract text from response
             let text = json["candidates"][0]["content"]["parts"][0]["text"]
@@ -104,5 +111,59 @@ impl GeminiClient {
         }
 
         anyhow::bail!("Gemini max retries exceeded: {last_error}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn local_client(base: String) -> GeminiClient {
+        GeminiClient {
+            api_key: "provider-key-fixture".into(), api_base: base,
+            model: "demo".into(), client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            last_call: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_errors_do_not_include_provider_keys() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let error = local_client(base).generate("prompt fixture", "data fixture")
+            .await.unwrap_err().to_string();
+        assert!(!error.contains("provider-key-fixture"), "credential in transport diagnostic");
+        assert!(!error.contains("?key="), "credential-bearing URL in diagnostic");
+    }
+
+    #[tokio::test]
+    async fn provider_errors_exclude_response_payloads_and_key_urls() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for _ in 0..MAX_RETRIES {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut data = vec![0; 8192];
+                let n = stream.read(&mut data).await.unwrap();
+                requests.push(String::from_utf8_lossy(&data[..n]).into_owned());
+                let body = "private-response-fixture provider-key-fixture";
+                let response = format!("HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let error = local_client(base).generate("prompt fixture", "data fixture")
+            .await.unwrap_err().to_string();
+        let requests = task.await.unwrap();
+        assert!(!error.contains("private-response-fixture"), "provider body in diagnostic");
+        assert!(!error.contains("provider-key-fixture"), "provider credential in diagnostic");
+        assert!(error.contains("400"), "status should remain useful");
+        for request in requests {
+            assert!(!request.lines().next().unwrap().contains("key="));
+            assert!(request.to_ascii_lowercase().contains("x-goog-api-key: provider-key-fixture"));
+        }
     }
 }

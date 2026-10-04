@@ -123,7 +123,7 @@ pub async fn run(args: &ChatArgs, db: &Database) -> anyhow::Result<()> {
 
     // Pager: write to temp file, open less at target line
     let tmp = std::env::temp_dir().join(format!("reclaude-chat-{}.ans", std::process::id()));
-    std::fs::write(&tmp, &text)?;
+    crate::private_fs::write_private_file(&tmp, &text)?;
 
     let mut less_args = vec!["-R".to_string()];
     if target_line > 0 {
